@@ -23,6 +23,10 @@ gateway/*.db-journal
 managed/
 *.zkir
 
+# Test and run output
+logs/
+*.log
+
 # OS / editor
 .DS_Store
 .idea/

@@ -9,15 +9,23 @@ Tooling decisions, so four directories built in parallel stay compatible.
   dependency problem. Check `node -v` first.
 - **TypeScript**, ESM throughout.
 - **npm workspaces.** Ships with Node, so there is no install step for anyone joining.
-- **Vitest** for tests.
+- **Not Bun.** Midnight publishes a [Bun guide](https://docs.midnight.network/how-to/bun-runtime-midnight)
+  and their own indexer QA tooling uses it — but as a package manager and launcher, with
+  vitest still running under Node. The SDK carries WASM and `better-sqlite3` is a native
+  module, and the guide's own limitations section flags native-module compatibility. Two
+  runtimes for three people to keep straight is not worth the install-time saving. One
+  lockfile, `package-lock.json`.
+- **Vitest** for tests. Proof generation dominates, so timeouts are raised in
+  `contracts/vitest.config.ts` — a single circuit call is 20–30s and remote wallet sync can
+  take minutes. Default timeouts fail before anything real happens.
 
 ## Layout
 
 ```
 shared/      types imported by every other package — see below
 contracts/   m402Vault.compact + deploy and measurement scripts
-gateway/     Hono service: 402, nullifier watch, origin + relay dispatch
-agent/       CLI: deposit, call
+gateway/     Hono service: 402, receipt watch, origin + relay dispatch
+agent/       CLI: deposit, call, redeem
 web/         Vite + React + Tailwind: publish form, explorer, withdrawal
 ```
 
@@ -85,3 +93,21 @@ of truth for ten rows that SQLite already holds.
   and the service has no authentication.
 - Wallet seeds are read from a gitignored file, never from `argv` or an environment variable —
   both leak through `ps`.
+
+## Running against Preview
+
+Wallet material is read from a **file**, never argv and never an env var holding the words —
+both leak through `ps` and shell history. The env var carries only a path.
+
+```bash
+cd contracts
+MIDNIGHT_NETWORK=preview \
+MIDNIGHT_PREVIEW_MNEMONIC_FILE=/path/to/.mnemonic \
+npx vitest run src/test/deploy.test.ts
+```
+
+Requires the proof server on `127.0.0.1:6300` and a Preview wallet holding tNIGHT that is
+**registered for DUST** — NIGHT alone is not enough to submit anything.
+
+Verified on Node 24.19.0. `.nvmrc` pins 22.12.0 and `engines` allows `22.x || 24.x`; both are
+supported by the SDK, but 22 has not been exercised against Preview here.
