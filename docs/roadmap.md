@@ -155,10 +155,20 @@ Current, deliberate, and documented:
   [constraints](constraints.md#a-shielded-amount-cannot-be-returned-as-change).
 - **Concurrent throughput is unmeasured.** A security review argued that writes to a
   contract conflict contract-wide rather than per key, which would cap a vault at about one
-  transaction per block. Our first attempt to measure it was invalid — the two concurrent
-  callers shared one LevelDB private-state store, and LevelDB is single-writer, so the
-  failure was local and looked exactly like on-chain contention. A corrected measurement is
-  in `deploy.test.ts`; until it reports, treat the ceiling as unknown.
+  transaction per block. Three attempts to measure it have all failed *locally*, before
+  either call reached the chain, and every failure mode looks exactly like on-chain
+  contention:
+
+  1. Both callers shared one LevelDB private-state store. LevelDB is single-writer.
+  2. Fresh stores, but a fresh store is empty — "No private state found".
+  3. Seeded stores, but a store scopes its keys by contract address — "Contract address
+     not set".
+
+  The attempt-3 fix is in `deploy.test.ts` and has not yet had a green run. Treat the
+  ceiling as unknown until the test reports **2 of 2 landed**. A 0 or a 1 is ambiguous,
+  not a measurement: both callers share one wallet, so the bottleneck could be wallet
+  coin selection rather than the contract. Separating them needs a second funded Preview
+  wallet.
 
   `pay` also does a read-modify-write on `merchantBalance[owner]`, which conflicts per
   merchant regardless of how coarse the platform's detection turns out to be.
@@ -186,7 +196,7 @@ Current, deliberate, and documented:
   reserve, and is the same trade a shielded pool makes everywhere.
 - **Privacy is bounded by the anonymity set.** An individual payment is unlinkable only among
   the other payments drawn from the pool. With one depositor and a handful of calls, an
-  observer correlates a public deposit with the nullifiers that follow it, by amount and by
+  observer correlates a public deposit with the receipts that follow it, by amount and by
   timing — separate transactions are not enough on their own. This is a property of usage
   rather than of the contract, and it is the same caveat every shielded pool carries.
 
@@ -199,3 +209,14 @@ Current, deliberate, and documented:
   addresses protocol-level privacy: agents authenticate with a proof rather than an account,
   so the gateway never learns who is paying or how much.
 - **Relayable services are curated**, not arbitrary.
+- **Losing a receipt secret loses the purchase.** Only `hash(secret, serviceId)` reaches the
+  chain, so the secret is the *only* proof a payment happened. It is written to the agent's
+  private state, which is an unreplicated local LevelDB store with a hardcoded development
+  password. Delete the store and the paid-for call cannot be claimed. Accepted for the
+  hackathon; a real deployment needs the secret persisted before the transaction is
+  submitted, not after, and backed up.
+- **The payer-anonymity claim has a test, and that test has not yet passed.**
+  `puts no payer identity into a pay transaction` in `deploy.test.ts` asserts that a `pay`
+  transaction carries no unshielded offer and no DUST registration — either would bind the
+  agent's public NIGHT address to the payment. Its first run failed on harness plumbing
+  rather than on the assertion, so the claim is currently reasoned, not demonstrated.
