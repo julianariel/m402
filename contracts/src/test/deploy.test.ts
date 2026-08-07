@@ -313,6 +313,60 @@ describe(`m402Vault (${network})`, () => {
     expect(state.merchantBalance.lookup(merchantOwner)).toEqual(PRICE * 2n);
   }, 10 * 60_000);
 
+  it('puts no payer identity into a pay transaction', async () => {
+    // The privacy claim, tested directly rather than inferred. `pay` must carry no
+    // unshielded offer (whose inputs are signed by the agent's NIGHT key) and no DUST
+    // registration (which is also signed with it). Either would bind the agent's public
+    // address to the payment and collapse the anonymity claim for that transaction.
+    //
+    // Both are reachable without any code change: a fee shortfall can pull an unshielded
+    // UTXO into balancing, and a first-time DUST registration rides along in intent 1.
+    // Neither is loud, so this is the regression test that makes the claim checkable.
+    let captured: unknown;
+    const spy = Object.create(wallet) as typeof wallet;
+    spy.balanceTx = async (tx, ttl) => {
+      const out = await wallet.balanceTx(tx, ttl);
+      captured = out;
+      return out;
+    };
+
+    // A fresh store is EMPTY, and its keys are scoped by contract address. Both must be
+    // handled or the call dies locally and never reaches the chain:
+    //   - no setContractAddress → "Contract address not set"
+    //   - no seeded state       → "No private state found at private state ID ..."
+    const spied = buildProviders(spy, zkConfigPath, config, {
+      privateStateStoreName: `m402-privacy-${Date.now()}`,
+    });
+    spied.privateStateProvider.setContractAddress(contractAddress);
+    await spied.privateStateProvider.set(PRIVATE_STATE_ID, emptyPrivateState());
+
+    await (submitCallTx as never as (p: unknown, o: unknown) => Promise<unknown>)(spied, {
+      compiledContract: CompiledM402Vault,
+      contractAddress,
+      privateStateId: PRIVATE_STATE_ID,
+      circuitId: 'pay',
+      args: [serviceId],
+    });
+
+    const tx = captured as { intents?: Map<number, {
+      guaranteedUnshieldedOffer?: unknown;
+      fallibleUnshieldedOffer?: unknown;
+      dustActions?: { registrations?: unknown[] };
+    }> };
+    expect(tx.intents).toBeDefined();
+
+    for (const [i, intent] of tx.intents!) {
+      expect(intent.guaranteedUnshieldedOffer, `intent ${i} carries an unshielded offer`)
+        .toBeFalsy();
+      expect(intent.fallibleUnshieldedOffer, `intent ${i} carries a fallible unshielded offer`)
+        .toBeFalsy();
+      expect(
+        intent.dustActions?.registrations?.length ?? 0,
+        `intent ${i} carries a DUST registration signed with the agent's NIGHT key`,
+      ).toBe(0);
+    }
+  }, 10 * 60_000);
+
   it('leaves the payer\'s NIGHT untouched by payments', async () => {
     // The anti-differencing property, observed from the only side we can see.
     // Deposits move NIGHT; payments must not, or consecutive balances would leak
@@ -461,28 +515,54 @@ describe(`m402Vault (${network})`, () => {
     });
 
     it('measures whether concurrent writes to the same contract conflict (H4)', async () => {
-      // registerService touches no coins, so anything that fails here is contract-level
-      // contention, not wallet coin selection. If distinct-key Map inserts conflict
-      // contract-wide, one of these must fail.
-      const mk = () => {
-        const o = new Uint8Array(randomBytes(32));
-        const sl = new Uint8Array(randomBytes(32));
-        return call('registerService', [sl, PRICE, o]);
+      // Each caller needs its OWN private-state store. LevelDB is single-writer, so two
+      // concurrent calls sharing one store fail with "Database failed to open" — a local
+      // artifact that looks exactly like on-chain contention and invalidated an earlier
+      // reading of this test.
+      //
+      // registerService touches no coins, so with that removed anything left is genuine
+      // contract-level contention rather than wallet coin selection.
+      // A fresh store starts empty AND scopes its keys by contract address. Miss either
+      // and the call fails locally without ever reaching the chain — which is how this
+      // measurement was wrong the second time ("No private state found") and the third
+      // ("Contract address not set").
+      const mk = async (tag: string) => {
+        const id = `${PRIVATE_STATE_ID}-${tag}`;
+        const p = buildProviders(wallet, zkConfigPath, config, {
+          privateStateStoreName: `m402-conc-${tag}-${Date.now()}`,
+        });
+        p.privateStateProvider.setContractAddress(contractAddress);
+        await p.privateStateProvider.set(id, emptyPrivateState());
+        return { p, id };
       };
 
-      const results = await Promise.allSettled([mk(), mk()]);
-      const ok = results.filter((r) => r.status === 'fulfilled').length;
+      const fire = ({ p, id }: { p: VaultProviders; id: string }) =>
+        (submitCallTx as never as (pr: unknown, o: unknown) => Promise<unknown>)(p, {
+          compiledContract: CompiledM402Vault,
+          contractAddress,
+          privateStateId: id,
+          circuitId: 'registerService',
+          args: [new Uint8Array(randomBytes(32)), PRICE, new Uint8Array(randomBytes(32))],
+        });
+
+      const [a, b] = await Promise.all([mk('a'), mk('b')]);
+      const before = (await readLedger()).servicePrice.size();
+      const results = await Promise.allSettled([fire(a), fire(b)]);
+      const after = (await readLedger()).servicePrice.size();
+      const landed = after - before;
 
       // console, not the logger: pino's transport is torn down before it flushes.
-      console.log(`\nCONCURRENCY: ${ok} of 2 concurrent registerService calls succeeded`);
+      console.log(`\nCONCURRENCY: ${landed} of 2 concurrent registerService calls landed on chain`);
       for (const r of results) {
-        if (r.status === 'rejected') console.log(`  rejected: ${String(r.reason).slice(0, 200)}`);
+        if (r.status === 'rejected') console.log(`  rejected: ${String(r.reason).slice(0, 240)}`);
       }
 
-      // Measured, not asserted. Observed 1/2 and 0/2 across runs, never 2/2:
-      // writes to one contract conflict contract-wide, so throughput is roughly one
-      // per block regardless of which key is touched. Recorded in constraints.md.
-      expect(ok).toBeLessThanOrEqual(2);
+      // Measured, not asserted. Read it carefully:
+      //   2 landed  → distinct-key writes do NOT conflict. No contract-wide ceiling.
+      //   0 or 1    → AMBIGUOUS. Both callers share one wallet, so the bottleneck could
+      //               be the wallet rather than the contract. Isolating that needs a
+      //               second funded wallet, which we do not have on Preview.
+      expect(landed).toBeGreaterThanOrEqual(0n);
     }, 10 * 60_000);
 
     it('pay rejects an unknown service', async () => {
