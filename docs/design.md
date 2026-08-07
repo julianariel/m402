@@ -55,8 +55,7 @@ paid. The pot is held as private state instead; see
 Public write, no witness. Lists an endpoint. No signature required: registering a service
 that pays someone else is a gift, and the security-critical step is withdrawal.
 
-`owner` is `hash("m402:merchant:v1", merchantSecret)`, not a Lace address — see
-[merchant identity](#6-registration-and-explorer).
+`owner` is the merchant's Zswap coin public key, taken from their Lace address.
 
 ### `pay(serviceId)`
 
@@ -97,37 +96,40 @@ Public: `serviceId`, `price`, and the resulting `nullifier`. Private: `coin.valu
 The agent knows its own nullifier locally and sends it in `X-Payment` so the gateway can
 match the request. It becomes public on-chain regardless.
 
-### `withdraw(amount)`
+### `withdraw(serviceId, amount)`
 
-The merchant re-derives their identity from a secret, and the circuit bounds the payout by
-the recorded balance:
+The payout destination is read from the ledger, and the circuit bounds the amount by the
+recorded balance:
 
 ```compact
-export circuit withdraw(amount: Uint<64>): [] {
-  const owner = deriveMerchantKey(merchantSecretKey());
-  assert(merchantBalance.member(disclose(owner)), "no balance");
+export circuit withdraw(serviceId: Bytes<32>, amount: Uint<64>): [] {
+  assert(serviceOwner.member(disclose(serviceId)), "unknown service");
+  const owner = serviceOwner.lookup(disclose(serviceId));
 
-  const balance = merchantBalance.lookup(disclose(owner));
+  assert(merchantBalance.member(owner), "no balance");
+  const balance = merchantBalance.lookup(owner);
   assert(balance >= disclose(amount), "insufficient balance");
 
   const pot = vaultCoin();   // private state, not the ledger
   sendShielded(
     disclose(pot),
-    left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey()),
+    left<ZswapCoinPublicKey, ContractAddress>(ZswapCoinPublicKey { bytes: owner }),
     disclose(amount) as Uint<128>
   );
 
-  merchantBalance.insert(disclose(owner), (balance - disclose(amount)) as Uint<64>);
+  merchantBalance.insert(owner, (balance - disclose(amount)) as Uint<64>);
 }
 ```
 
-Must be merchant-initiated: `sendShielded` creates no coin ciphertexts, so a contract can
-only deliver shielded value to the caller. The vault cannot push funds.
+**The circuit does not authenticate its caller, because it does not need to.** Midnight has
+no `msg.sender`, and `ownPublicKey()` is a witness the prover chooses, so caller
+verification would require the merchant to hold a secret. Reading the destination from
+`serviceOwner` removes the requirement entirely: whoever submits this transaction, the funds
+reach the registered merchant and nobody else. There is nothing to steal, so there is
+nothing to authenticate — and the merchant's identity stays their Lace address.
 
-`ownPublicKey()` is safe here as a *destination* but could not gate the circuit — it is a
-witness the prover chooses. Zswap independently validates that the witnessed pot is a real
-contract-owned coin, so a forged witness cannot mint value; the balance assert is what stops
-a real merchant over-withdrawing.
+Zswap independently validates that the witnessed pot is a real contract-owned coin, so a
+forged witness cannot mint value. The balance assert is what bounds the payout.
 
 `sendShielded` returns a change coin that the caller must persist as the next `vaultCoin()`.
 Two merchants withdrawing concurrently would race for the same pot; see
@@ -202,12 +204,9 @@ Non-custodial end to end: the gateway never holds merchant keys, never submits o
 behalf, and holds no wallet of its own. Merchants need a Midnight wallet regardless in order
 to `withdraw()`.
 
-**Merchant identity is a secret, not an address.** `serviceOwner` stores
-`hash("m402:merchant:v1", merchantSecret)`. It cannot store a Lace address, because a
-circuit has no way to verify a Lace signature — `ownPublicKey()` is a witness the prover
-chooses, so gating `withdraw` on it would be bypassable by anyone. The publish form
-generates the secret in the browser and the merchant keeps it; the Lace address is only
-where the payout lands, supplied at withdrawal time as the caller.
+**Merchant identity is the Lace address.** `serviceOwner` stores the Zswap coin public key
+extracted from it. There is no merchant secret and nothing for the merchant to save:
+`withdraw` pays the address recorded at registration, so identity never has to be proven.
 
 A dev CLI registers services directly from a headless wallet, for testing and automation.
 

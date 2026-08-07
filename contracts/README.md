@@ -92,17 +92,23 @@ reaches public state.
 
 ### Caller identity
 
-`ownPublicKey()` is a witness. The prover picks its return value and the protocol does not
-check it against the signer, so **it cannot gate a circuit**. Derive identity from a secret
-instead:
+There is no `msg.sender` on Midnight. `ownPublicKey()` is a witness: the prover picks its
+return value and the protocol does not check it against the signer, so **it cannot gate a
+circuit**. The only sound caller check is hash-of-secret,
+`persistentHash([pad(32, "domain"), sk])`, which costs the user a secret to safeguard.
+
+**m402 avoids needing one.** `withdraw` reads its payout destination from `serviceOwner`
+rather than from the caller, so any caller sends the funds to the registered merchant.
+Nothing to steal, nothing to authenticate, and merchant identity stays a Lace address.
+
+Constructing a recipient from stored bytes:
 
 ```compact
-circuit deriveMerchantKey(sk: Bytes<32>): Bytes<32> {
-  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "m402:merchant:v1"), sk]);
-}
+left<ZswapCoinPublicKey, ContractAddress>(ZswapCoinPublicKey { bytes: owner })
 ```
 
-`ownPublicKey()` remains correct as a *destination* — routing value to the caller.
+Reach for hash-of-secret only where a circuit must restrict *who acts*, not merely *where
+value lands*.
 
 ---
 

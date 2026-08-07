@@ -122,9 +122,11 @@ Current, deliberate, and documented:
   `sendShielded` returns a change coin the caller must persist. Two merchants withdrawing
   concurrently would race for the same pot. Fixing it means one pot coin per merchant,
   keyed and merged on deposit.
-- **Merchants hold a secret, not just a wallet.** A circuit cannot verify a Lace signature,
-  so merchant identity is `hash(domain, secret)`. Losing the secret means losing the
-  balance.
+- **Withdrawal can be triggered by anyone.** The payout destination is read from the ledger,
+  so this cannot steal — the funds always reach the registered merchant. But `sendShielded`
+  creates no coin ciphertexts, so a payout the merchant did not initiate may not appear in
+  their wallet. Closing it means caller authentication, which on Midnight costs the merchant
+  a secret to safeguard; not worth the trade today.
 - **Funding events are visible.** The payment graph is private; the fact that an agent
   acquired NIGHT is not.
 - **Network metadata is out of scope.** The gateway observes IP addresses and timing. m402
