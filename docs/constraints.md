@@ -32,6 +32,19 @@ value only to the account invoking it.
 **Consequence.** The vault cannot push funds to a merchant. Merchants must **pull** via
 `withdraw()`. This is why the design is a vault rather than a direct transfer.
 
+## A contract cannot hold a coin publicly
+
+Ledger state is public in full, including a `QualifiedShieldedCoinInfo` written to a cell —
+its `value` field is readable by anyone. A contract that keeps its pot in ledger state
+therefore publishes the pot total after every payment, and consecutive totals differ by
+exactly the amount just paid.
+
+**Consequence.** The vault keeps no coin in ledger state. Public state is `merchantBalance`
+only, which moves by the public `price`. The spendable pot reaches `withdraw` as a witness;
+Zswap validates independently that the coin is real and contract-owned, and the circuit
+bounds the payout by the recorded balance. The cost is that the change coin must be
+persisted off-chain by the caller.
+
 ## `disclose()` is a visibility annotation
 
 `disclose()` is a compile-time annotation permitting a witness-derived value to cross into

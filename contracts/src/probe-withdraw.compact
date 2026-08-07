@@ -1,0 +1,36 @@
+// Throwaway probe for issue #1. Not part of the vault.
+// Question: can the contract pay a merchant WITHOUT publishing coin values in ledger state?
+pragma language_version 0.23;
+
+import CompactStandardLibrary;
+
+// The spendable pot lives in private state, not the ledger. Putting a
+// QualifiedShieldedCoinInfo in a ledger cell would publish its `value`.
+witness vaultCoin(): QualifiedShieldedCoinInfo;
+witness merchantSecretKey(): Bytes<32>;
+
+export ledger serviceOwner:    Map<Bytes<32>, Bytes<32>>;
+export ledger merchantBalance: Map<Bytes<32>, Uint<64>>;
+
+// Identity is a hash of a secret the merchant holds. ownPublicKey() cannot be
+// used to gate this: it is a witness the prover chooses.
+export circuit deriveMerchantKey(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "m402:merchant:v1"), sk]);
+}
+
+export circuit withdraw(amount: Uint<64>): [] {
+  const owner = deriveMerchantKey(merchantSecretKey());
+  assert(merchantBalance.member(disclose(owner)), "no balance");
+
+  const balance = merchantBalance.lookup(disclose(owner));
+  assert(balance >= disclose(amount), "insufficient balance");
+
+  const pot = vaultCoin();
+  const result = sendShielded(
+    disclose(pot),
+    left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey()),
+    disclose(amount) as Uint<128>
+  );
+
+  merchantBalance.insert(disclose(owner), (balance - disclose(amount)) as Uint<64>);
+}

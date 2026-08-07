@@ -118,6 +118,13 @@ Current, deliberate, and documented:
 - **Merchant call volume is public.** Payers and amounts are not.
 - **Payment and delivery are not atomic.** No refund path exists yet.
 - **The relayer is a trusted operator** for its USDC float.
+- **Withdrawal is single-operator.** The vault's pot coin is held off-chain and
+  `sendShielded` returns a change coin the caller must persist. Two merchants withdrawing
+  concurrently would race for the same pot. Fixing it means one pot coin per merchant,
+  keyed and merged on deposit.
+- **Merchants hold a secret, not just a wallet.** A circuit cannot verify a Lace signature,
+  so merchant identity is `hash(domain, secret)`. Losing the secret means losing the
+  balance.
 - **Funding events are visible.** The payment graph is private; the fact that an agent
   acquired NIGHT is not.
 - **Network metadata is out of scope.** The gateway observes IP addresses and timing. m402

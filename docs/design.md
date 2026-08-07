@@ -45,10 +45,18 @@ export ledger nullifiers:       Set<Bytes<32>>;            // spent payments
 export ledger merchantBalance:  Map<Bytes<32>, Uint<64>>;  // claimable
 ```
 
+No coin ever appears in ledger state. A `QualifiedShieldedCoinInfo` stored in a ledger cell
+would publish its `value`, and consecutive pot totals would differ by exactly the amount
+paid. The pot is held as private state instead; see
+[`constraints.md`](constraints.md#a-contract-cannot-hold-a-coin-publicly).
+
 ### `registerService(serviceId, price, owner)`
 
 Public write, no witness. Lists an endpoint. No signature required: registering a service
 that pays someone else is a gift, and the security-critical step is withdrawal.
+
+`owner` is `hash("m402:merchant:v1", merchantSecret)`, not a Lace address — see
+[merchant identity](#6-registration-and-explorer).
 
 ### `pay(serviceId)`
 
@@ -57,43 +65,78 @@ selective disclosure possible without a second circuit.
 
 ```compact
 export circuit pay(serviceId: Bytes<32>): [] {
-  const price = servicePrice.lookup(serviceId);
+  assert(servicePrice.member(disclose(serviceId)), "unknown service");
+  const price = servicePrice.lookup(disclose(serviceId));
 
-  // Witness values: these live on the agent's machine and are never written publicly.
-  const amount = witnessPaymentAmount();
-  const nonce  = witnessPaymentNonce();   // fresh random 32 bytes per payment
+  // The coin lives on the agent's machine. receiveShielded takes a coin, not an
+  // amount; the amount is coin.value and it is never written publicly.
+  const coin = paymentCoin();
+  assert(coin.value >= price as Uint<128>, "underpaid");
 
-  assert(amount >= price, "underpaid");
+  // Commits to the amount, so it doubles as the opening for selective disclosure.
+  // coin.nonce is fresh per payment and private, which is what stops an observer
+  // brute-forcing the amount out of the hash — the amount space is small.
+  const nullifier = persistentHash<Vector<3, Bytes<32>>>(
+    [coin.nonce, serviceId, coin.value as Bytes<32>]
+  );
+  assert(!nullifiers.member(disclose(nullifier)), "already spent");
 
-  // Binds the on-chain record to the actual amount paid.
-  // The nonce MUST be freshly random: a predictable nonce would let an observer
-  // brute-force the amount out of the hash, since the amount space is small.
-  const nullifier = persistentHash([nonce, serviceId, amount]);
-  assert(!nullifiers.member(nullifier), "already spent");
+  receiveShielded(disclose(coin));
+  nullifiers.insert(disclose(nullifier));
 
-  receiveShielded(amount);
-  nullifiers.insert(nullifier);
-
-  const owner = serviceOwner.lookup(serviceId);
-  merchantBalance.insert(owner, merchantBalance.lookupOrDefault(owner, 0) + price);
+  const owner = serviceOwner.lookup(disclose(serviceId));
+  const prior = merchantBalance.member(owner) ? merchantBalance.lookup(owner) : 0 as Uint<64>;
+  merchantBalance.insert(owner, (prior + price) as Uint<64>);
 }
 ```
 
-Public: `serviceId`, `price`, and the resulting `nullifier`. Private: `amount` and `nonce`.
+Public: `serviceId`, `price`, and the resulting `nullifier`. Private: `coin.value` and
+`coin.nonce`. `disclose(coin)` on `receiveShielded` releases the coin *commitment* — a hash
+— not the value.
 
 The agent knows its own nullifier locally and sends it in `X-Payment` so the gateway can
 match the request. It becomes public on-chain regardless.
 
-### `withdraw()`
+### `withdraw(amount)`
 
-The merchant proves key ownership and receives their balance. Must be merchant-initiated:
-`sendShielded` creates no coin ciphertexts, so a contract can only deliver shielded value to
-the caller. The vault cannot push funds.
+The merchant re-derives their identity from a secret, and the circuit bounds the payout by
+the recorded balance:
+
+```compact
+export circuit withdraw(amount: Uint<64>): [] {
+  const owner = deriveMerchantKey(merchantSecretKey());
+  assert(merchantBalance.member(disclose(owner)), "no balance");
+
+  const balance = merchantBalance.lookup(disclose(owner));
+  assert(balance >= disclose(amount), "insufficient balance");
+
+  const pot = vaultCoin();   // private state, not the ledger
+  sendShielded(
+    disclose(pot),
+    left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey()),
+    disclose(amount) as Uint<128>
+  );
+
+  merchantBalance.insert(disclose(owner), (balance - disclose(amount)) as Uint<64>);
+}
+```
+
+Must be merchant-initiated: `sendShielded` creates no coin ciphertexts, so a contract can
+only deliver shielded value to the caller. The vault cannot push funds.
+
+`ownPublicKey()` is safe here as a *destination* but could not gate the circuit — it is a
+witness the prover chooses. Zswap independently validates that the witnessed pot is a real
+contract-owned coin, so a forged witness cannot mint value; the balance assert is what stops
+a real merchant over-withdrawing.
+
+`sendShielded` returns a change coin that the caller must persist as the next `vaultCoin()`.
+Two merchants withdrawing concurrently would race for the same pot; see
+[roadmap](roadmap.md#known-limitations).
 
 ### Selective disclosure
 
-Because the nullifier is `hash(nonce, serviceId, amount)`, it is a commitment to the payment.
-To disclose one payment, the payer sends `(nonce, serviceId, amount)` to an auditor
+Because the nullifier is `hash(coin.nonce, serviceId, coin.value)`, it is a commitment to the
+payment. To disclose one payment, the payer sends `(nonce, serviceId, amount)` to an auditor
 off-chain, encrypted to the auditor's public key. The auditor recomputes the hash and checks
 it against the nullifier on the public ledger.
 
@@ -105,11 +148,9 @@ Aggregate proofs across many payments require bounded loops and are out of scope
 
 ### Implementation note
 
-Exact Compact stdlib signatures — `receiveShielded`, the hash primitive, `Map`/`Set` methods
-including default-on-missing lookup, and witness declaration — must be confirmed against
-compact 0.31.1. Prior art with a similar shape:
-[`tusharpamnani/midnight-escrow`](https://github.com/tusharpamnani/midnight-escrow) and
-[`bochaco/dmarket`](https://github.com/bochaco/dmarket).
+Every signature above is confirmed against compact 0.31.1 by compiling. The confirmed API,
+including the traps that are easy to guess wrong, is recorded in
+[`../contracts/README.md`](../contracts/README.md#confirmed-stdlib-signatures).
 
 ## 4. Settlement and pricing
 
@@ -160,6 +201,13 @@ Merchants connect Lace and sign `registerService` themselves, paying their own D
 Non-custodial end to end: the gateway never holds merchant keys, never submits on their
 behalf, and holds no wallet of its own. Merchants need a Midnight wallet regardless in order
 to `withdraw()`.
+
+**Merchant identity is a secret, not an address.** `serviceOwner` stores
+`hash("m402:merchant:v1", merchantSecret)`. It cannot store a Lace address, because a
+circuit has no way to verify a Lace signature — `ownPublicKey()` is a witness the prover
+chooses, so gating `withdraw` on it would be bypassable by anyone. The publish form
+generates the secret in the browser and the merchant keeps it; the Lace address is only
+where the payout lands, supplied at withdrawal time as the caller.
 
 A dev CLI registers services directly from a headless wallet, for testing and automation.
 
