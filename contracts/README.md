@@ -2,6 +2,33 @@
 
 `m402Vault.compact` — the payment vault.
 
+## Deployed vault — Preview
+
+**The gateway, the web app and the agent CLI must all point at this one address.** A payment
+to a different vault lands where the gateway is not watching, and the failure looks like a
+gateway bug rather than a configuration mistake.
+
+```
+M402_VAULT_ADDRESS=17b4cf15ad768fa0e5090da960e86eaf7cc885f86eb5a6b241e2fd28d98546ae
+```
+
+Deployed 2026-08-07 to Preview, in 18.0 s. Verified on chain through the indexer from a
+separate process: the contract resolves, and `servicePrice`, `serviceOwner`, `receipts` and
+`merchantBalance` are all empty with `mintCounter` at 0 — a clean vault.
+
+Its credit token colour, which the agent needs to build a coin of the right colour, is
+`ea9f46f75fc6183ced8c6a6d905b66cb3e57add5e2fe8ec928d34379a65514be`. Derive it rather than
+copying it: `pureCircuits.creditColor({ bytes: fromHex(vaultAddress) })`.
+
+Do **not** take an address out of a test run — `npm test` deploys a throwaway vault every
+time. To deploy a new persistent one:
+
+```bash
+MIDNIGHT_NETWORK=preview \
+MIDNIGHT_PREVIEW_MNEMONIC_FILE=/path/to/.mnemonic \
+npx tsx src/deploy-vault.ts
+```
+
 Five state circuits: `registerService`, `deposit`, `pay`, `redeem`, `withdraw`. See
 [`../docs/design.md`](../docs/design.md#3-contract--m402vaultcompact).
 
