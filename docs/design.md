@@ -19,6 +19,7 @@ what removes the need for a quote round-trip, a price oracle, and a refund path.
 
 ## 2. Request flow
 
+0. Agent calls `deposit()` once, converting NIGHT into shielded credits
 1. Agent requests `GET /s/:id`
 2. Gateway replies `402` with `{ serviceId, price, vaultAddress }`
 3. Agent builds `pay()`, proves locally, submits to Midnight
@@ -28,9 +29,14 @@ what removes the need for a quote round-trip, a price oracle, and a refund path.
 7. Resource returned verbatim
 8. Merchant calls `withdraw()` at any time
 
+Step 0 is a one-time top-up, not part of the per-call path — it costs a proof, but it is
+amortised over every call the deposit funds. Steps 1–7 are the per-call loop.
+
 The agent submits its own transaction. The gateway only reads the chain: it holds no funds,
 signs nothing, and cannot fabricate a payment. Step 5 is a GraphQL-WS subscription against
 the indexer.
+
+Diagrams for each step: [`architecture/payment-flow.md`](architecture/payment-flow.md).
 
 ## 3. Contract — `m402Vault.compact`
 
@@ -194,7 +200,10 @@ Deposits and withdrawals are visible; the payments between them are not. The poo
 balance moves only on deposit and withdrawal, never on payment, so no payment amount can be
 recovered by differencing it.
 
-Prices are entered and displayed in **USD**, settled in **NIGHT**:
+Credits are denominated in STAR, one-for-one with the NIGHT backing them, so a price stored
+in `servicePrice` means the same amount of value whichever side of the deposit you are on.
+
+Prices are entered and displayed in **USD**, settled in **credits**:
 
 - the merchant enters a USD price at registration
 - the gateway converts once, at registration, using a fixed rate, and stores STAR in
@@ -239,9 +248,15 @@ Non-custodial end to end: the gateway never holds merchant keys, never submits o
 behalf, and holds no wallet of its own. Merchants need a Midnight wallet regardless in order
 to `withdraw()`.
 
-**Merchant identity is the Lace address.** `serviceOwner` stores the Zswap coin public key
-extracted from it. There is no merchant secret and nothing for the merchant to save:
-`withdraw` pays the address recorded at registration, so identity never has to be proven.
+**Merchant identity is the Lace address.** `serviceOwner` stores the merchant's unshielded
+address bytes, which `sendUnshielded` takes directly as a `UserAddress`. There is no merchant
+secret and nothing to save: `withdraw` pays the address recorded at registration, so identity
+never has to be proven.
+
+`serviceId` is 32 random bytes generated in the publish form. On-chain it is only a key; the
+URL lives in the gateway's registry. Registration is first-come and immutable — `Map.insert`
+overwrites, so without that guard anyone could re-register a `serviceId` with themselves as
+owner and redirect the merchant's revenue.
 
 A dev CLI registers services directly from a headless wallet, for testing and automation.
 
@@ -253,16 +268,26 @@ chain. Public: service name, price, call volume. Hidden: every payer and every a
 
 ## 7. Agent
 
-A CLI wrapping one function: handle the 402, build and prove the payment, submit, retry with
-the nullifier, return the resource. It reports proof-generation and verification timings
-separately, since they differ by four orders of magnitude.
+A CLI wrapping two commands.
+
+`m402 deposit <amount>` converts NIGHT into shielded credits and persists the returned credit
+coin. Run once per top-up. Losing the coin loses the deposit — there is no redeem path.
+
+`m402 call <url>` is the per-call loop: handle the 402, build and prove the payment, submit,
+retry with the nullifier, return the resource. It reports proof-generation and verification
+timings separately, since they differ by four orders of magnitude, and it labels deposit cost
+distinctly so a one-off top-up is not mistaken for per-call latency.
 
 ## 8. Failure modes
 
 | Condition | Result |
 |---|---|
 | Agent underpays | `assert` fails, transaction rejected, nothing spent |
+| Agent pays with a foreign token | Colour assert fails — only vault-minted credits are accepted |
 | Nullifier replayed | Rejected on-chain — one payment cannot buy two calls |
+| `serviceId` re-registered | Rejected on-chain — registration is first-come and immutable |
+| Agent loses its credit coin | Deposit unrecoverable. No redeem path; only merchants withdraw |
+| Deposit tx lacks the NIGHT input | `receiveUnshielded` fails at submit — nothing minted |
 | Indexer lag after submit | Gateway polls with backoff, ~60s timeout |
 | Origin down after payment lands | Agent paid, received nothing. No refund path. |
 | Agent never retries after paying | Same — payment spent, merchant credited, no resource |

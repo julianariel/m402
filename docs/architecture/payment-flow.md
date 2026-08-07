@@ -1,23 +1,68 @@
 # Flow diagrams
 
+Sequence and boundary diagrams for each operation. The contract they describe is
+[`../../contracts/src/m402Vault.compact`](../../contracts/src/m402Vault.compact); the
+reasoning behind the shapes is in [`../design.md`](../design.md).
+
+## Value lifecycle
+
+Where money enters, moves, and leaves. **NIGHT is unshielded**, so it cannot be spent
+privately — the vault pools it and issues a shielded credit against it 1:1. Privacy lives
+entirely in the middle step.
+
+```mermaid
+flowchart LR
+    subgraph pub1["public"]
+        night["Agent's NIGHT"]
+    end
+
+    subgraph priv["private — the only shielded hop"]
+        credit["shielded credit"]
+        pay["pay() × N"]
+    end
+
+    subgraph pub2["public"]
+        bal["merchantBalance<br/>+= price"]
+        out["Merchant's NIGHT"]
+    end
+
+    night -->|"deposit()"| credit
+    credit --> pay
+    pay --> bal
+    bal -->|"withdraw()"| out
+
+    pool[("pooled NIGHT<br/>reserve")]
+    night -.->|backs| pool
+    pool -.->|backs| out
+```
+
+The reserve's balance is public, but it moves **only** on deposit and withdrawal — never on
+payment. That is what stops payment amounts being recovered by differencing it.
+
 ## Deposit
 
-Public by nature: unshielded NIGHT in, shielded credit out. Done once, not per call.
+Once per top-up, not per call. Unshielded NIGHT in, shielded credit out.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant A as Agent
-    participant L as Lace
+    participant W as Wallet
     participant V as m402Vault
 
-    A->>L: deposit(amount)
-    L->>V: unshielded NIGHT
+    A->>W: deposit(amount)
+    W->>V: tx carrying unshielded NIGHT
     V->>V: receiveUnshielded(nativeToken(), amount)
-    V->>V: mintShieldedToken(credit, amount)
-    V-->>A: shielded credit coin
-    Note over A,V: amount and address are public here<br/>and only here
+    V->>V: nonce = evolveNonce(mintCounter, seed)
+    V->>V: mintShieldedToken(credit, amount, nonce)
+    V-->>A: sendImmediateShielded → caller
+    Note over A,V: amount and address are public here —<br/>and only here
+
+    A->>A: persist the credit coin
+    Note over A: lose it and the deposit is unrecoverable
 ```
+
+Merchants use Lace; the agent CLI uses a headless wallet. Both take this same path.
 
 ## Payment — native service
 
@@ -33,17 +78,24 @@ sequenceDiagram
     A->>G: GET /s/:id
     G-->>A: 402 { serviceId, price, vaultAddress }
 
-    Note over A: prove pay() locally<br/>credit amount stays on this machine
+    Note over A: prove pay() locally — ~19s<br/>credit value never leaves this machine
     A->>V: submit pay() tx
-    V->>V: assert colour is m402 credit<br/>assert amount >= price<br/>insert nullifier<br/>credit merchant by public price
+    V->>V: assert colour == m402 credit
+    V->>V: assert value >= price
+    V->>V: nullifier = hash(nonce, serviceId, value)
+    V->>V: assert nullifier unspent, then insert
+    V->>V: merchantBalance += price (public price, not value)
 
     A->>G: GET /s/:id + X-Payment: nullifier
     G->>I: watch for nullifier
-    I-->>G: nullifier confirmed
+    I-->>G: nullifier confirmed — verify ~3.4ms
     G->>O: proxy request
     O-->>G: resource
     G-->>A: resource
 ```
+
+The colour assert is not optional: `receiveShielded` does not check what token it receives,
+so without it any minted token would buy API calls.
 
 ## Payment — relayed x402 service
 
@@ -77,15 +129,23 @@ sequenceDiagram
     participant W as Web UI
     participant L as Lace
     participant V as m402Vault
+    participant GW as Gateway registry
 
     M->>W: URL + price in USD
+    W->>W: serviceId = 32 random bytes
     W->>W: convert USD → STAR (fixed rate)
     W->>L: request signature
     L->>M: approve
     L->>V: registerService(serviceId, price, owner)
+    V->>V: assert serviceId not already registered
+    W->>GW: store serviceId → URL
     W-->>M: m402 URL (confirming…)
     Note over W,V: flips to "live" once the indexer sees it
 ```
+
+`owner` is the merchant's unshielded Lace address — it is the payout destination, so no
+merchant secret exists. Registration is first-come and immutable; without that guard anyone
+could re-register a `serviceId` and redirect its revenue.
 
 ## Withdrawal
 
@@ -101,9 +161,14 @@ sequenceDiagram
 
     M->>L: withdraw(serviceId, amount)
     L->>V: withdraw(serviceId, amount)
-    V->>V: owner = serviceOwner.lookup(serviceId)<br/>assert balance >= amount
-    V-->>M: sendUnshielded(NIGHT) to owner's address
+    V->>V: owner = serviceOwner.lookup(serviceId)
+    V->>V: assert balance >= amount
+    V-->>M: sendUnshielded(NIGHT) → owner's address
+    V->>V: merchantBalance -= amount
 ```
+
+`sendUnshielded` takes a `UserAddress` and has no coin-ciphertext restriction, so the vault
+can pay any address rather than only its caller. No pot coin and no change coin to track.
 
 ## Selective disclosure
 
@@ -116,10 +181,10 @@ sequenceDiagram
     participant Au as Auditor
     participant L as Public ledger
 
-    Note over P: holds (nonce, serviceId, amount)
+    Note over P: holds (nonce, serviceId, value)
     P->>Au: opening, encrypted to auditor key
     Au->>L: read nullifier
-    Au->>Au: recompute hash(nonce, serviceId, amount)
+    Au->>Au: recompute hash(nonce, serviceId, value)
     Au->>Au: compare to on-chain nullifier
 
     Note over Au: learns this payment's amount<br/>and nothing else
@@ -128,9 +193,9 @@ sequenceDiagram
 ## Trust boundaries
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph private["Agent's machine — private"]
-        amount["credit amount"]
+        value["credit value"]
         nonce["coin nonce"]
         prover["local proof server"]
     end
@@ -139,18 +204,23 @@ flowchart LR
         nullifier["nullifier"]
         price["price"]
         volume["merchant volume"]
+        reserve["pooled NIGHT reserve"]
+        deposits["deposit + withdrawal<br/>amounts and addresses"]
     end
 
     subgraph trusted["Trusted operator"]
         relayer["relayer USDC float"]
     end
 
-    amount --> prover
+    value --> prover
     nonce --> prover
     prover --> nullifier
     price --> nullifier
 ```
 
-`amount` and `nonce` never leave the agent's machine. The ledger records only that a payment
-of at least `price` occurred. Deposits and withdrawals sit outside this boundary and are
-public.
+`value` and `nonce` never leave the agent's machine, and the ledger records only that a
+payment of at least `price` occurred.
+
+Deposits and withdrawals sit **outside** that boundary: both amount and address are public.
+This is inherent to backing a shielded credit with an unshielded reserve, and is the trade
+every shielded pool makes. Full list in [`../roadmap.md`](../roadmap.md#known-limitations).

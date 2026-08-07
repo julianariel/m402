@@ -25,21 +25,24 @@ vault exactly like any other merchant.
 ## How it works
 
 ```
+   0. deposit NIGHT once  ──►  shielded credit  (public, one-off)
+
 ┌─────────────┐   1. GET /s/abc          ┌──────────────────────┐
 │    Agent    │ ───────────────────────► │   m402 Gateway       │
 │  (CLI/SDK)  │ ◄─────────────────────── │   proxy + verifier   │
 └──────┬──────┘   2. 402 + requirements  └───────┬──────────────┘
        │                                         │
-       │ 3. pay() tx                             │ 5. watch indexer
+       │ 3. pay() — spends credit                │ 5. watch indexer
        ▼                                         │    for nullifier
 ┌─────────────────────────────┐                  │
 │   m402Vault.compact         │ ◄────────────────┘
 │   nullifiers · balances     │                  │ 6. dispatch
-└─────────────────────────────┘                  ▼
-       ▲                        ┌────────────────┴─────────────┐
-       │ 8. withdraw            │  origin API    │  EVM relayer│
-┌──────┴──────┐                 │  (marketplace) │  (x402 out) │
-│  Merchant   │                 └──────────────────────────────┘
+│   pooled NIGHT reserve      │                  ▼
+└─────────────────────────────┘  ┌───────────────┴──────────────┐
+       ▲                         │  origin API    │  EVM relayer│
+       │ 8. withdraw NIGHT       │  (marketplace) │  (x402 out) │
+┌──────┴──────┐                  └──────────────────────────────┘
+│  Merchant   │
 └─────────────┘
 ```
 
@@ -49,16 +52,21 @@ holds funds, never signs, and cannot fake a payment.
 The privacy property comes from one line in the payment circuit:
 
 ```compact
-assert(amount >= price, "underpaid");
+assert(coin.value >= price as Uint<128>, "underpaid");
 ```
 
-`price` is public. `amount` is a witness — it never leaves the agent's machine.
+`price` is public. `coin.value` is private — it never leaves the agent's machine.
+
+**Why a credit and not NIGHT directly.** NIGHT is an unshielded token, so spending it would
+reveal the amount. The vault pools deposited NIGHT and mints a shielded credit against it
+1:1. Deposits and withdrawals are public; every payment between them is private — the same
+trade any shielded pool makes.
 
 ## Layout
 
 | Path | Contents |
 |---|---|
-| `contracts/` | `m402Vault.compact` — the vault, three circuits |
+| `contracts/` | `m402Vault.compact` — the vault: `registerService`, `deposit`, `pay`, `withdraw` |
 | `gateway/` | Proxy, origin + relay adapters, indexer watcher |
 | `agent/` | Agent CLI and SDK |
 | `web/` | Marketplace and explorer |
@@ -69,12 +77,12 @@ assert(amount >= price, "underpaid");
 - [`docs/design.md`](docs/design.md) — architecture, contract, gateway, failure modes
 - [`docs/constraints.md`](docs/constraints.md) — measured Midnight platform limits that shape the design
 - [`docs/roadmap.md`](docs/roadmap.md) — deferred scope and known limitations
-- [`docs/architecture/payment-flow.md`](docs/architecture/payment-flow.md) — sequence diagrams
+- [`docs/architecture/payment-flow.md`](docs/architecture/payment-flow.md) — value lifecycle, sequence diagrams, trust boundaries
 
 ## Status
 
-Hackathon build. Runs on Midnight **Preview**. Settlement is shielded NIGHT; prices are
-entered in USD and converted once at registration.
+Hackathon build. Runs on Midnight **Preview**. Settlement is a vault-minted shielded credit
+backed 1:1 by pooled NIGHT; prices are entered in USD and converted once at registration.
 
 Known limitations are documented rather than hidden — see
 [`docs/roadmap.md`](docs/roadmap.md#known-limitations).
@@ -84,3 +92,4 @@ Known limitations are documented rather than hidden — see
 - Node 22 or 24 (23 and 26 break the Midnight SDK's ESM resolution)
 - Docker, for the local proof server on `:6300`
 - Lace wallet, for merchant registration and withdrawal
+- tNIGHT from the Preview faucet, to deposit against
