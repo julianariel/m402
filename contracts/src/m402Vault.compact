@@ -42,6 +42,15 @@ export pure circuit creditColor(self: ContractAddress): Bytes<32> {
   return tokenType(creditDomain(), self);
 }
 
+// The redemption credential, and the selective-disclosure opening. Exported and pure
+// so the gateway can verify a payment, and an auditor can verify a disclosure, with
+// no proof and no reimplementation of the hash.
+export pure circuit deriveReceipt(secret: Bytes<32>, serviceId: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>(
+    [pad(32, "m402:receipt:v1"), secret, serviceId]
+  );
+}
+
 // serviceId is derived from the owner, not chosen freely. A front-runner who copies an
 // in-flight registration and substitutes their own address necessarily produces a
 // DIFFERENT serviceId, so they cannot capture the merchant's. Exported so the gateway
@@ -105,9 +114,7 @@ export circuit pay(serviceId: Bytes<32>): [] {
   // Redemption credential. The SECRET stays with the payer and is what they present
   // to the gateway; only its hash is public, so an observer watching the chain cannot
   // steal the purchase. Doubles as the selective-disclosure opening.
-  const receipt = persistentHash<Vector<3, Bytes<32>>>(
-    [pad(32, "m402:receipt:v1"), receiptSecret(), sid]
-  );
+  const receipt = deriveReceipt(receiptSecret(), sid);
   assert(!receipts.member(disclose(receipt)), "receipt reused");
 
   receiveShielded(disclose(coin));
