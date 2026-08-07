@@ -12,6 +12,12 @@ node_modules/
 dist/
 build/
 .turbo/
+*.tsbuildinfo
+coverage/
+
+# Gateway registry (SQLite, one file per environment)
+gateway/*.db
+gateway/*.db-journal
 
 # Compact build artifacts
 managed/
