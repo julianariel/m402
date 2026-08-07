@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { CompiledContract } from '@midnight-ntwrk/midnight-js-protocol/compact-js';
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { WebSocket } from 'ws';
@@ -19,7 +20,7 @@ import { getConfig } from '../lib/config.js';
 import { MidnightWalletProvider, syncWallet, type WalletSecret } from '../lib/wallet.js';
 import { buildProviders, type VaultProviders } from '../lib/providers.js';
 import { CompiledM402Vault, Contract, ledger, pureCircuits, zkConfigPath } from '../contract.js';
-import { emptyPrivateState } from '../witnesses.js';
+import { emptyPrivateState, witnesses } from '../witnesses.js';
 
 // Required for GraphQL subscriptions in Node.
 // @ts-expect-error WebSocket global assignment for apollo
@@ -358,4 +359,87 @@ describe(`m402Vault (${network})`, () => {
     // nothing. The merchant's PRICE * 2 left the pool to the registered address.
     expect(await agentNight()).toEqual(nightBefore - PRICE * 2n);
   }, 10 * 60_000);
+
+  // Every case below fails during local circuit execution, before proving, so each
+  // costs milliseconds rather than ~20s. They are the security claims stated as tests.
+  describe('rejections', () => {
+    const call = <C extends 'pay' | 'withdraw' | 'registerService'>(
+      circuitId: C,
+      args: unknown[],
+      compiled = CompiledM402Vault,
+    ) =>
+      (submitCallTx as never as (p: unknown, o: unknown) => Promise<unknown>)(providers, {
+        compiledContract: compiled,
+        contractAddress,
+        privateStateId: PRIVATE_STATE_ID,
+        circuitId,
+        args,
+      });
+
+    it('withdraw rejects a zero amount', async () => {
+      // Without this guard, anyone can write merchantBalance once per block for free
+      // and fail every concurrent payment to that merchant.
+      await expect(call('withdraw', [serviceId, 0n])).rejects.toThrow(/amount must be positive/);
+    });
+
+    it('withdraw rejects more than the balance', async () => {
+      await expect(call('withdraw', [serviceId, 1n])).rejects.toThrow(
+        /insufficient balance|no balance/,
+      );
+    });
+
+    it('withdraw rejects an unknown service', async () => {
+      const unknown = new Uint8Array(randomBytes(32));
+      await expect(call('withdraw', [unknown, 1n])).rejects.toThrow(/unknown service/);
+    });
+
+    it('registerService rejects re-registering the same owner and salt', async () => {
+      // The revenue-redirection guard. Map.insert overwrites without it.
+      await expect(call('registerService', [salt, PRICE, merchantOwner])).rejects.toThrow(
+        /already registered/,
+      );
+    });
+
+    it('registerService rejects a zero price', async () => {
+      const freshSalt = new Uint8Array(randomBytes(32));
+      await expect(call('registerService', [freshSalt, 0n, merchantOwner])).rejects.toThrow(
+        /price must be positive/,
+      );
+    });
+
+    // A hostile agent controls its own witnesses, so the attacks below are exactly what
+    // a real attacker would do: supply a coin the contract should refuse.
+    const hostile = (bad: Partial<{ color: Uint8Array; value: (p: bigint) => bigint }>) =>
+      CompiledContract.make('M402VaultHostile', Contract).pipe(
+        CompiledContract.withWitnesses({
+          ...witnesses,
+          creditCoin: (ctx: never, _sid: Uint8Array, price: bigint) => {
+            const [ps, coin] = witnesses.creditCoin(ctx, _sid, price);
+            return [
+              ps,
+              { ...coin, ...(bad.color ? { color: bad.color } : {}),
+                value: bad.value ? bad.value(price) : coin.value },
+            ];
+          },
+        } as never),
+        CompiledContract.withCompiledFileAssets(zkConfigPath),
+      );
+
+    it('pay rejects a coin of the wrong colour', async () => {
+      // Without the colour assert, an attacker mints a worthless token and buys calls.
+      const forged = hostile({ color: new Uint8Array(randomBytes(32)) });
+      await expect(call('pay', [serviceId], forged)).rejects.toThrow(/not an m402 credit/);
+    });
+
+    it('pay rejects underpayment', async () => {
+      // The core solvency assert. If this passes, there is no payment guarantee at all.
+      const short = hostile({ value: (p) => p - 1n });
+      await expect(call('pay', [serviceId], short)).rejects.toThrow(/underpaid/);
+    });
+
+    it('pay rejects an unknown service', async () => {
+      const unknown = new Uint8Array(randomBytes(32));
+      await expect(call('pay', [unknown])).rejects.toThrow(/unknown service/);
+    });
+  });
 });
