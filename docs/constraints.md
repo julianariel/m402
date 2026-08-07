@@ -52,6 +52,23 @@ caller. m402 sidesteps this by paying merchants in **unshielded** NIGHT via `sen
 which takes a `UserAddress` and has no such restriction — so `withdraw` can pay the address
 recorded at registration regardless of who calls it.
 
+## A shielded amount cannot be returned as change
+
+`pay` consumes the whole credit coin. Returning the difference through the circuit does not
+work: the compiler rejects an undisclosed mint with
+
+```
+the call to standard-library circuit mintShieldedToken might disclose the value of
+a token mint given by the result of a subtraction involving the witness value
+```
+
+A disclosed change amount plus the public price reveals the original coin value.
+
+**Consequence.** The wallet splits off a coin worth exactly `price` before calling `pay`, so
+the paid amount always equals the published price. m402 hides **who** paid, not **how much**
+— the amount was public in `servicePrice` all along. `assert(coin.value >= price)` is still a
+real solvency check; it is not an amount-hiding mechanism.
+
 ## A contract cannot hold a coin publicly
 
 Ledger state is public in full, including a `QualifiedShieldedCoinInfo` written to a cell —

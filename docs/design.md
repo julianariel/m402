@@ -17,14 +17,39 @@ Relayed services are registered in the marketplace exactly like native ones, at 
 covering USDC cost plus margin. From the agent's side the two are indistinguishable. This is
 what removes the need for a quote round-trip, a price oracle, and a refund path.
 
+## Privacy
+
+Precisely what m402 does and does not hide. Everything here was established by compiling, or
+by an adversarial audit of the contract.
+
+**Private — the payer.** `pay` takes no payer argument and reads no caller identity. It
+proves possession of a valid credit coin and nothing else. No address appears in the
+transaction, and two payments by the same agent cannot be linked to each other. This is the
+property x402 on a transparent chain cannot have, and it is the whole point.
+
+**Public — everything about the trade.** The service, its price, the merchant, the timing,
+and a `merchantBalance` increment of exactly `price`. Deposits and redemptions are public in
+both amount and address.
+
+**The amount is not hidden, and cannot be.** `pay` consumes the whole credit coin, so the
+wallet splits off a coin worth exactly `price` — which is published in `servicePrice`.
+Returning change through the circuit does not help: the compiler reports that
+`mintShieldedToken` *"might disclose the value of a token mint"*, so a change amount plus the
+public price gives the original away. `assert(coin.value >= price)` remains a real solvency
+check — it lets the circuit accept a coin without learning which coin — but it is not an
+amount-hiding mechanism.
+
+**Privacy is bounded by the anonymity set.** A payment is unlinkable only among other
+payments drawn from the pool. See [roadmap](roadmap.md#known-limitations).
+
 ## 2. Request flow
 
 0. Agent calls `deposit()` once, converting NIGHT into shielded credits
 1. Agent requests `GET /s/:id`
 2. Gateway replies `402` with `{ serviceId, price, vaultAddress }`
 3. Agent builds `pay()`, proves locally, submits to Midnight
-4. Agent retries with header `X-Payment: <nullifier>`
-5. Gateway watches the indexer for that nullifier against that `serviceId`
+4. Agent retries with header `X-Payment: <receiptSecret>`
+5. Gateway hashes it, checks membership in the on-chain `receipts` set for that `serviceId`
 6. Gateway dispatches on `service.type` — proxy to origin, or relay to EVM
 7. Resource returned verbatim
 8. Merchant calls `withdraw()` at any time
@@ -36,54 +61,68 @@ The agent submits its own transaction. The gateway only reads the chain: it hold
 signs nothing, and cannot fabricate a payment. Step 5 is a GraphQL-WS subscription against
 the indexer.
 
+**Step 4 sends the receipt *secret*, never the nullifier.** The nullifier is public on-chain;
+anyone subscribed to the indexer could see one land and redeem the purchase before the honest
+agent retried. Only the hash of the secret is published, so possession of the secret is what
+proves the purchase. The gateway must also record consumed secrets locally — the on-chain set
+proves a payment happened, not that it is unspent.
+
 Diagrams for each step: [`architecture/payment-flow.md`](architecture/payment-flow.md).
 
 ## 3. Contract — `m402Vault.compact`
 
-Four circuits: `registerService`, `deposit`, `pay`, `withdraw`. All compile against compact
-0.31.1; the confirmed stdlib API is in
-[`../contracts/README.md`](../contracts/README.md#confirmed-stdlib-signatures).
+Five circuits: `registerService`, `deposit`, `pay`, `redeem`, `withdraw`, plus the pure
+`deriveServiceId`. All compile against compact 0.31.1; the confirmed stdlib API and the
+witness requirements are in [`../contracts/README.md`](../contracts/README.md).
 
 ### Ledger state (public)
 
 ```compact
 export ledger servicePrice:    Map<Bytes<32>, Uint<64>>;  // serviceId -> price in STAR
 export ledger serviceOwner:    Map<Bytes<32>, Bytes<32>>; // serviceId -> merchant UserAddress
-export ledger nullifiers:      Set<Bytes<32>>;            // spent payments
+export ledger nullifiers:      Set<Bytes<32>>;            // replay guard
+export ledger receipts:        Set<Bytes<32>>;            // hashed redemption credentials
 export ledger merchantBalance: Map<Bytes<32>, Uint<64>>;  // claimable
-export ledger mintCounter:     Counter;                   // deposit nonce source
+export ledger mintCounter:     Counter;                   // deposit nonce index
 ```
 
 No coin appears in ledger state. A `QualifiedShieldedCoinInfo` in a ledger cell publishes its
-`value`, and consecutive totals would differ by exactly the amount paid; see
-[`constraints.md`](constraints.md#a-contract-cannot-hold-a-coin-publicly).
+`value`; see [`constraints.md`](constraints.md#a-contract-cannot-hold-a-coin-publicly).
 
-### `registerService(serviceId, price, owner)`
+### `registerService(salt, price, owner)`
 
 ```compact
-export circuit registerService(serviceId: Bytes<32>, price: Uint<64>, owner: Bytes<32>): [] {
-  assert(!servicePrice.member(disclose(serviceId)), "already registered");
-  servicePrice.insert(disclose(serviceId), disclose(price));
-  serviceOwner.insert(disclose(serviceId), disclose(owner));
+export pure circuit deriveServiceId(owner: Bytes<32>, salt: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([pad(32, "m402:sid:v1"), owner, salt]);
+}
+
+export circuit registerService(salt: Bytes<32>, price: Uint<64>, owner: Bytes<32>): [] {
+  assert(price > 0, "price must be positive");
+  const serviceId = deriveServiceId(disclose(owner), disclose(salt));
+  assert(!servicePrice.member(serviceId), "already registered");
+  assert(!serviceOwner.member(serviceId), "already registered");
+  servicePrice.insert(serviceId, disclose(price));
+  serviceOwner.insert(serviceId, disclose(owner));
 }
 ```
 
-`serviceId` is 32 random bytes chosen by the publisher. It is only a key on-chain — the URL
-lives in the gateway's off-chain registry.
+**`serviceId` is derived from the owner, not chosen freely.** A free `serviceId` is
+front-runnable: an observer copies an in-flight registration, substitutes their own `owner`,
+wins the race, and — because registration is immutable — permanently collects that service's
+revenue. Deriving the id from `owner` means a substituted address produces a *different* id
+and cannot collide. Both maps are guarded, so neither can be replaced independently.
 
-**The guard is security-critical.** `Map.insert` overwrites, so without it anyone could
-re-register an existing `serviceId` with themselves as `owner` and redirect the merchant's
-revenue. Registration is first-come and immutable.
-
-`owner` is the merchant's unshielded Lace address, used directly as the payout destination.
+`deriveServiceId` is `pure`, so the gateway and web app compute the same id off-chain with no
+proof. `owner` is the merchant's unshielded Lace address, used directly as the payout
+destination.
 
 ### `deposit(amount)`
 
-Unshielded NIGHT in, shielded credits out. Public by nature — see
-[settlement](#4-settlement-and-pricing).
+Unshielded NIGHT in, shielded credit out. Public by nature.
 
 ```compact
 export circuit deposit(amount: Uint<64>): [] {
+  assert(amount > 0, "amount must be positive");
   receiveUnshielded(nativeToken(), disclose(amount) as Uint<128>);
 
   const nonce = disclose(evolveNonce(mintCounter as Field as Uint<64>, nonceSeed()));
@@ -99,56 +138,90 @@ export circuit deposit(amount: Uint<64>): [] {
 ```
 
 `ownPublicKey()` is sound here: it routes value *to* the caller, and a caller who lies only
-misdirects their own deposit.
+misdirects their own deposit. It is never sound as a gate.
+
+`mintCounter` is a public index, not entropy. **All of a payment's unlinkability rests on
+`nonceSeed()`**, and a deterministic seed still produces distinct, non-colliding nonces — so
+the failure is silent. See [witness requirements](../contracts/README.md#witness-requirements).
 
 ### `pay(serviceId)`
 
-The nullifier is derived inside the circuit rather than passed in, which is what makes
-selective disclosure possible without a second circuit.
-
 ```compact
 export circuit pay(serviceId: Bytes<32>): [] {
-  assert(servicePrice.member(disclose(serviceId)), "unknown service");
-  const price = servicePrice.lookup(disclose(serviceId));
+  const sid = disclose(serviceId);
+  assert(servicePrice.member(sid), "unknown service");
+  const price = servicePrice.lookup(sid);
 
-  const coin = creditCoin();
-  // Without this the agent could mint a worthless token and pay with it.
+  const coin = creditCoin(sid, price);
   assert(coin.color == tokenType(creditDomain(), kernel.self()), "not an m402 credit");
   assert(coin.value >= price as Uint<128>, "underpaid");
 
-  // Commits to the amount, so it doubles as the opening for selective disclosure.
-  // coin.nonce is fresh per payment and private, which is what stops an observer
-  // brute-forcing the amount out of the hash — the amount space is small.
   const nullifier = persistentHash<Vector<3, Bytes<32>>>(
-    [coin.nonce, serviceId, coin.value as Bytes<32>]
+    [pad(32, "m402:nul:v1"), coin.nonce, sid]
   );
   assert(!nullifiers.member(disclose(nullifier)), "already spent");
 
+  const receipt = persistentHash<Vector<3, Bytes<32>>>(
+    [pad(32, "m402:receipt:v1"), receiptSecret(), sid]
+  );
+  assert(!receipts.member(disclose(receipt)), "receipt reused");
+
   receiveShielded(disclose(coin));
   nullifiers.insert(disclose(nullifier));
+  receipts.insert(disclose(receipt));
 
-  const owner = serviceOwner.lookup(disclose(serviceId));
+  const owner = serviceOwner.lookup(sid);
   const prior = merchantBalance.member(owner) ? merchantBalance.lookup(owner) : 0 as Uint<64>;
   merchantBalance.insert(owner, (prior + price) as Uint<64>);
 }
 ```
 
-Public: `serviceId`, `price`, and the resulting `nullifier`. Private: `coin.value` and
-`coin.nonce`. `disclose(coin)` on `receiveShielded` releases the coin *commitment* — a hash —
-not the value. `merchantBalance` moves by the public `price`, never by what was actually paid.
+Three things here are load-bearing.
 
-The colour assert is load-bearing. Contract token colours are collision-resistant, so only
-this vault can mint that colour; without the check any minted token would buy API calls.
+**The colour assert.** `receiveShielded` does not check what token it receives. Without this,
+an attacker mints their own worthless shielded token and buys API calls with it. Contract
+token colours are collision-resistant, so only this vault can mint that colour.
 
-The agent knows its own nullifier locally and sends it in `X-Payment` so the gateway can match
-the request. It becomes public on-chain regardless.
+**The receipt, and why it is not the nullifier.** The nullifier is written to a public set.
+If it were also the redemption credential, anyone watching the indexer could see one land and
+claim the resource before the honest agent retried — and replay it forever. The receipt
+publishes only `hash(domain, secret, serviceId)`; the payer keeps the secret and presents it
+to the gateway.
+
+**`creditCoin` is parameterised.** `pay` consumes the whole coin, so the wallet must supply
+one worth exactly `price`. A zero-argument witness could not know the price and would return
+the agent's largest coin, silently stranding the remainder.
+
+### `redeem(recipient)`
+
+Cash unspent credit back to NIGHT, so an agent that over-funded is not stuck.
+
+```compact
+export circuit redeem(recipient: Bytes<32>): [] {
+  const coin = redeemCoin();
+  assert(coin.color == tokenType(creditDomain(), kernel.self()), "not an m402 credit");
+  assert(coin.value > 0, "nothing to redeem");
+
+  receiveShielded(disclose(coin));
+  sendUnshielded(
+    nativeToken(), disclose(coin.value),
+    right<ContractAddress, UserAddress>(UserAddress { bytes: disclose(recipient) })
+  );
+}
+```
+
+No authentication: holding the coin *is* the authorisation, since Zswap validates the spend.
+The caller may therefore name any destination — it is their own money. Redeeming is public in
+both amount and address, like depositing.
 
 ### `withdraw(serviceId, amount)`
 
 ```compact
 export circuit withdraw(serviceId: Bytes<32>, amount: Uint<64>): [] {
-  assert(serviceOwner.member(disclose(serviceId)), "unknown service");
-  const owner = serviceOwner.lookup(disclose(serviceId));
+  const sid = disclose(serviceId);
+  assert(amount > 0, "amount must be positive");
+  assert(serviceOwner.member(sid), "unknown service");
+  const owner = serviceOwner.lookup(sid);
 
   assert(merchantBalance.member(owner), "no balance");
   const balance = merchantBalance.lookup(owner);
@@ -158,33 +231,37 @@ export circuit withdraw(serviceId: Bytes<32>, amount: Uint<64>): [] {
     nativeToken(), disclose(amount) as Uint<128>,
     right<ContractAddress, UserAddress>(UserAddress { bytes: owner })
   );
-
   merchantBalance.insert(owner, (balance - disclose(amount)) as Uint<64>);
 }
 ```
 
-**The circuit does not authenticate its caller, because it does not need to.** Midnight has no
-`msg.sender`, and `ownPublicKey()` is a witness the prover chooses, so caller verification
-would require the merchant to hold a secret. Reading the destination from `serviceOwner`
-removes the requirement: whoever submits this, the funds reach the registered merchant and
-nobody else. Nothing to steal, so nothing to authenticate — and merchant identity stays a Lace
-address.
+**No caller authentication, deliberately.** Midnight has no `msg.sender`, and
+`ownPublicKey()` is a witness the prover chooses, so verifying the caller would cost the
+merchant a secret to safeguard. Reading the destination from `serviceOwner` removes the
+requirement: whoever submits this, the funds reach the registered merchant.
 
-Paying out unshielded NIGHT means no pot coin, no change coin to persist, and no race between
-merchants.
+The residual is griefing, not theft — anyone can *trigger* a merchant's payout. `amount > 0`
+rejects the zero-value no-op, which would otherwise be a free way to contend on
+`merchantBalance` and fail concurrent payments to that merchant.
 
 ### Selective disclosure
 
-Because the nullifier is `hash(coin.nonce, serviceId, coin.value)`, it is a commitment to the
-payment. To disclose one payment, the payer sends `(nonce, serviceId, amount)` to an auditor
-off-chain, encrypted to the auditor's public key. The auditor recomputes the hash and checks it
-against the nullifier on the public ledger.
+`receipts` holds `hash("m402:receipt:v1", secret, serviceId)`. To prove one purchase to an
+auditor, the payer hands over that payment's secret; the auditor recomputes the hash and
+checks membership on the public ledger. It proves *this payment, to this service, by me* and
+reveals nothing about any other payment.
 
-The auditor learns that one payment's amount and nothing else — no other payment, no long-term
-secret, no balance. The public learns nothing at any point.
+The nullifier is deliberately **not** a commitment to the amount. It is a hash, not a hiding
+commitment, and its only secret input is a coin nonce chosen for a different purpose —
+handing that to an auditor would leak Zswap-level material. Since the amount equals the
+public `price` anyway, there is nothing to disclose about it.
 
-Aggregate proofs across many payments require bounded loops and are out of scope; see
-[roadmap](roadmap.md).
+### Solvency
+
+`merchantBalance` can only be credited by `pay`, which requires receiving real m402-coloured
+credit; that credit can only exist via `deposit`, which requires an equal amount of NIGHT.
+`withdraw` and `redeem` decrement both sides together. Outstanding claims can therefore never
+exceed the pooled reserve.
 
 ## 4. Settlement and pricing
 
@@ -220,7 +297,8 @@ USDC.
 ```
 1. resolve serviceId from /s/:id
 2. no X-Payment?  → 402 { serviceId, price, vaultAddress }
-3. X-Payment?     → verify nullifier on-chain via indexer
+3. X-Payment?     → hash the secret, check the on-chain receipts set,
+                    then check it against the locally-consumed set
 4. dispatch on service.type:
      "origin" → HTTP proxy to merchant's URL
      "relay"  → x402 client → pay USDC → fetch
@@ -283,10 +361,13 @@ distinctly so a one-off top-up is not mistaken for per-call latency.
 | Condition | Result |
 |---|---|
 | Agent underpays | `assert` fails, transaction rejected, nothing spent |
+| Agent over-funds and stops | `redeem` returns the unspent credit as NIGHT |
+| Observer copies a nullifier from the chain | Useless — redemption needs the receipt secret, which is never published |
+| Registration front-run | `serviceId` is derived from `owner`, so a substituted address yields a different id |
 | Agent pays with a foreign token | Colour assert fails — only vault-minted credits are accepted |
 | Nullifier replayed | Rejected on-chain — one payment cannot buy two calls |
 | `serviceId` re-registered | Rejected on-chain — registration is first-come and immutable |
-| Agent loses its credit coin | Deposit unrecoverable. No redeem path; only merchants withdraw |
+| Agent loses its credit coin | Unrecoverable — `redeem` needs the coin |
 | Deposit tx lacks the NIGHT input | `receiveUnshielded` fails at submit — nothing minted |
 | Indexer lag after submit | Gateway polls with backoff, ~60s timeout |
 | Origin down after payment lands | Agent paid, received nothing. No refund path. |

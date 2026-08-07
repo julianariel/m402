@@ -2,35 +2,63 @@
 //
 // NIGHT is an unshielded token, so it cannot itself be the private payment asset.
 // The vault pools deposited NIGHT and issues a shielded credit against it 1:1.
-// Deposits and withdrawals are public; the payments between them are not.
+//
+// What is private: WHO paid, and the fact that two payments came from the same agent.
+// What is public: deposits, redemptions, withdrawals, the service, its price, and
+// the merchant. See docs/design.md#privacy.
 pragma language_version 0.23;
 
 import CompactStandardLibrary;
 
-witness creditCoin(): ShieldedCoinInfo;   // the credit the agent is spending
+// The credit coin being spent. Parameterised so the wallet can select or pre-split a
+// coin matching the price — pay consumes the whole coin, so a coin larger than the
+// price would leave the remainder unclaimable.
+witness creditCoin(serviceId: Bytes<32>, price: Uint<64>): ShieldedCoinInfo;
+
+// The credit coin being cashed out. Consumed in full.
+witness redeemCoin(): ShieldedCoinInfo;
+
+// Fresh CSPRNG bytes, per call. Both of these are load-bearing:
+//   nonceSeed    — the anonymity of every payment funded by a deposit
+//   receiptSecret — the redemption credential for one purchase
+// A deterministic value for either still produces distinct-looking, non-colliding
+// output, so the failure is silent and invisible on-chain. See contracts/README.md.
 witness nonceSeed(): Bytes<32>;
+witness receiptSecret(): Bytes<32>;
 
 export ledger servicePrice:    Map<Bytes<32>, Uint<64>>;
 export ledger serviceOwner:    Map<Bytes<32>, Bytes<32>>;
 export ledger nullifiers:      Set<Bytes<32>>;
+export ledger receipts:        Set<Bytes<32>>;
 export ledger merchantBalance: Map<Bytes<32>, Uint<64>>;
 export ledger mintCounter:     Counter;
 
-circuit creditDomain(): Bytes<32> {
-  return pad(32, "m402:credit:v1");
+pure circuit creditDomain(): Bytes<32> { return pad(32, "m402:credit:v1"); }
+
+// serviceId is derived from the owner, not chosen freely. A front-runner who copies an
+// in-flight registration and substitutes their own address necessarily produces a
+// DIFFERENT serviceId, so they cannot capture the merchant's. Exported so the gateway
+// and web app can derive the same id off-chain.
+export pure circuit deriveServiceId(owner: Bytes<32>, salt: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([pad(32, "m402:sid:v1"), owner, salt]);
 }
 
-// serviceId is 32 random bytes chosen by the publisher. The guard makes
-// registration first-come and immutable: without it, anyone could re-register an
-// existing serviceId with themselves as owner and redirect the merchant's revenue.
-export circuit registerService(serviceId: Bytes<32>, price: Uint<64>, owner: Bytes<32>): [] {
-  assert(!servicePrice.member(disclose(serviceId)), "already registered");
-  servicePrice.insert(disclose(serviceId), disclose(price));
-  serviceOwner.insert(disclose(serviceId), disclose(owner));
+export circuit registerService(salt: Bytes<32>, price: Uint<64>, owner: Bytes<32>): [] {
+  assert(price > 0, "price must be positive");
+
+  const serviceId = deriveServiceId(disclose(owner), disclose(salt));
+  // Map.insert overwrites. Both maps are guarded so neither can be replaced, and
+  // registration is first-come and immutable.
+  assert(!servicePrice.member(serviceId), "already registered");
+  assert(!serviceOwner.member(serviceId), "already registered");
+
+  servicePrice.insert(serviceId, disclose(price));
+  serviceOwner.insert(serviceId, disclose(owner));
 }
 
-// Public: who deposited and how much. Deposits are visible by design.
+// Unshielded NIGHT in, shielded credit out. Public in amount and address, by nature.
 export circuit deposit(amount: Uint<64>): [] {
+  assert(amount > 0, "amount must be positive");
   receiveUnshielded(nativeToken(), disclose(amount) as Uint<128>);
 
   const nonce = disclose(evolveNonce(mintCounter as Field as Uint<64>, nonceSeed()));
@@ -40,6 +68,8 @@ export circuit deposit(amount: Uint<64>): [] {
     nonce,
     right<ZswapCoinPublicKey, ContractAddress>(kernel.self())
   );
+  // ownPublicKey() is sound as a DESTINATION: a caller who lies misdirects only their
+  // own deposit. It is never sound as a gate.
   sendImmediateShielded(
     coin,
     left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey()),
@@ -48,39 +78,69 @@ export circuit deposit(amount: Uint<64>): [] {
   mintCounter.increment(1);
 }
 
-// Private: the amount. Public: the nullifier and the merchant's price increment.
 export circuit pay(serviceId: Bytes<32>): [] {
-  assert(servicePrice.member(disclose(serviceId)), "unknown service");
-  const price = servicePrice.lookup(disclose(serviceId));
+  const sid = disclose(serviceId);
+  assert(servicePrice.member(sid), "unknown service");
+  const price = servicePrice.lookup(sid);
 
-  const coin = creditCoin();
-  // Without this the agent could mint a worthless token and pay with it.
+  const coin = creditCoin(sid, price);
+  // receiveShielded does NOT constrain the colour. Without this, a self-minted
+  // worthless token would buy API calls.
   assert(coin.color == tokenType(creditDomain(), kernel.self()), "not an m402 credit");
   assert(coin.value >= price as Uint<128>, "underpaid");
 
+  // Replay guard. Defence in depth over Zswap's own double-spend prevention.
   const nullifier = persistentHash<Vector<3, Bytes<32>>>(
-    [coin.nonce, serviceId, coin.value as Bytes<32>]
+    [pad(32, "m402:nul:v1"), coin.nonce, sid]
   );
   assert(!nullifiers.member(disclose(nullifier)), "already spent");
 
+  // Redemption credential. The SECRET stays with the payer and is what they present
+  // to the gateway; only its hash is public, so an observer watching the chain cannot
+  // steal the purchase. Doubles as the selective-disclosure opening.
+  const receipt = persistentHash<Vector<3, Bytes<32>>>(
+    [pad(32, "m402:receipt:v1"), receiptSecret(), sid]
+  );
+  assert(!receipts.member(disclose(receipt)), "receipt reused");
+
   receiveShielded(disclose(coin));
   nullifiers.insert(disclose(nullifier));
+  receipts.insert(disclose(receipt));
 
-  const owner = serviceOwner.lookup(disclose(serviceId));
+  const owner = serviceOwner.lookup(sid);
   const prior = merchantBalance.member(owner) ? merchantBalance.lookup(owner) : 0 as Uint<64>;
   merchantBalance.insert(owner, (prior + price) as Uint<64>);
 }
 
-// Pays real NIGHT out of the pool. No pot coin, no change coin, no caller auth.
+// Cash unspent credit back to NIGHT. Holding the coin IS the authorisation — Zswap
+// validates the spend — so the caller may name any destination for their own funds.
+export circuit redeem(recipient: Bytes<32>): [] {
+  const coin = redeemCoin();
+  assert(coin.color == tokenType(creditDomain(), kernel.self()), "not an m402 credit");
+  assert(coin.value > 0, "nothing to redeem");
+
+  receiveShielded(disclose(coin));
+  sendUnshielded(
+    nativeToken(),
+    disclose(coin.value),
+    right<ContractAddress, UserAddress>(UserAddress { bytes: disclose(recipient) })
+  );
+}
+
 export circuit withdraw(serviceId: Bytes<32>, amount: Uint<64>): [] {
-  assert(serviceOwner.member(disclose(serviceId)), "unknown service");
-  const owner = serviceOwner.lookup(disclose(serviceId));
+  const sid = disclose(serviceId);
+  // Rejects the zero-amount no-op, which would otherwise be a free way to contend on
+  // merchantBalance and fail concurrent payments to this merchant.
+  assert(amount > 0, "amount must be positive");
+  assert(serviceOwner.member(sid), "unknown service");
+  const owner = serviceOwner.lookup(sid);
 
   assert(merchantBalance.member(owner), "no balance");
   const balance = merchantBalance.lookup(owner);
   assert(balance >= disclose(amount), "insufficient balance");
 
-  // Recipient is a UserAddress — the merchant's unshielded Lace address.
+  // No caller authentication: the destination is read from the ledger, so whoever
+  // submits this, the funds reach the registered merchant.
   sendUnshielded(
     nativeToken(),
     disclose(amount) as Uint<128>,

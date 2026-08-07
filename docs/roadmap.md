@@ -42,15 +42,39 @@ amount to the payer when delivery fails. One circuit unlocks both features.
 
 Payments are unlinkable only among other payments in the pool, and the pool is small.
 
-**Approach.** Fixed-denomination credits, so amounts stop distinguishing payments; a deposit
-queue that batches several agents' funding into one transaction; and a wallet default that
-deposits more than the immediate need. The Chaumian e-cash work above delivers the first of
-these as a side effect.
+**Approach.** A deposit queue that batches several agents' funding into one transaction, and
+a wallet default that deposits well above the immediate need so deposit sizes stop
+correlating with spending. The Chaumian e-cash work above helps too, by decoupling the timing
+of proving from the timing of spending.
+
+## Protocol fees
+
+m402 currently takes **no fee**. Every unit deposited is redeemable or spendable at par, and
+merchants receive the full `price`. That keeps the demo's accounting trivially auditable, and
+the solvency invariant is a plain equality rather than an equality minus a rake.
+
+The relayer path is the exception and already earns: relayed services are listed at a price
+covering USDC cost **plus margin**, so the spread exists there today.
+
+**Approach.** Three places a fee could sit, in increasing intrusiveness:
+
+1. **A spread on `redeem`** — cash out at 99%. One `assert` and one arithmetic line, touches
+   neither the payment path nor its proving time, and cannot be avoided by an agent that
+   wants its NIGHT back. Cheapest to add.
+2. **A cut of each payment** — `merchantBalance += price - fee`, `protocolBalance += fee`.
+   Most legible as a business model, but it adds a public ledger write to the hottest and
+   most proof-expensive circuit.
+3. **A deposit spread** — mint 99 credits per 100 NIGHT. Simple, but it prices the on-ramp,
+   which is exactly the friction a new agent feels first.
+
+Option 1 for a first cut. Whichever is chosen, the fee must be a ledger field set at
+deployment rather than a compile-time constant, or changing it means redeploying and
+migrating every registered service.
 
 ## Private merchant volume
 
 `merchantBalance` increases by a public `price`, so call volume per service is observable.
-Payers and amounts are not.
+Payers are not.
 
 **Approach.** Store merchant balances as commitments and settle with a proof at withdrawal
 rather than incrementing a public integer.
@@ -125,7 +149,14 @@ roadmap.
 
 Current, deliberate, and documented:
 
-- **Merchant call volume is public.** Payers and amounts are not.
+- **Merchant call volume is public.** Payers are not.
+- **The amount paid is public**, because it equals the published `price`. m402 hides who
+  paid, not how much. A shielded amount cannot be returned as change — see
+  [constraints](constraints.md#a-shielded-amount-cannot-be-returned-as-change).
+- **Concurrent payments to one merchant serialise.** `pay` does a read-then-write on
+  `merchantBalance[owner]`, so two payments to the same merchant in one block conflict and
+  one fails after its proof has already been generated. Sharding the balance map or moving
+  accumulation off the payment path would fix it.
 - **Payment and delivery are not atomic.** No refund path exists yet.
 - **The relayer is a trusted operator** for its USDC float.
 - **Withdrawal can be triggered by anyone.** The payout destination is read from the ledger,
@@ -146,8 +177,6 @@ Current, deliberate, and documented:
   **more than one agent** funding the pool. Deposit and payment must never share a
   transaction — that would bind amount, payer and nullifier into one public record and make
   the proof pointless.
-- **The credit is not redeemable by its holder.** An agent who deposits more than they spend
-  cannot get the remainder back; only merchants withdraw. A `redeem` circuit is the fix.
 - **Network metadata is out of scope.** The gateway observes IP addresses and timing. m402
   addresses protocol-level privacy: agents authenticate with a proof rather than an account,
   so the gateway never learns who is paying or how much.

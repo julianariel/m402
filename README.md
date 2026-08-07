@@ -2,18 +2,17 @@
 
 **Private agentic payments on Midnight.**
 
-x402 lets AI agents pay for APIs and data in real time, but it runs on transparent chains:
-every payment reveals who paid, whom, how much, and how often. That exposes an agent's
-strategy, usage volume, and counterparties.
+x402 lets AI agents pay for APIs and data in real time, but it runs on transparent chains.
+Every payment is signed by an address, so an agent's entire spending history is public and
+linkable: which services it uses, how often, in what order, alongside what else. That is its
+strategy.
 
-m402 implements the same 402-and-retry flow on Midnight. The merchant learns that a correct
-payment happened. The chain records that someone paid **at least** the asking price — the
-payment itself carries neither the amount nor the payer.
+m402 implements the same 402-and-retry flow on Midnight. **Payments carry no payer.** Nobody
+— not the merchant, not the gateway, not an observer — can tell which agent paid, or link two
+payments to the same agent.
 
-Agents fund a shielded pool first, and that funding step is public. Privacy comes from the
-gap between funding and spending, so it is as strong as the pool is busy — the standard
-shielded-pool property, spelled out in
-[known limitations](docs/roadmap.md#known-limitations).
+Prices stay public, because a marketplace needs a price list. What disappears is the identity
+behind each call. See [what is and isn't private](docs/design.md#privacy).
 
 ## Two surfaces, one rail
 
@@ -54,17 +53,20 @@ vault exactly like any other merchant.
 The agent submits its own transaction; the gateway only reads the chain. The gateway never
 holds funds, never signs, and cannot fake a payment.
 
-The privacy property comes from one line in the payment circuit:
+The privacy property is that `pay` takes **no payer argument and reads no caller identity**.
+It proves possession of a valid credit and nothing more:
 
 ```compact
+assert(coin.color == tokenType(creditDomain(), kernel.self()), "not an m402 credit");
 assert(coin.value >= price as Uint<128>, "underpaid");
 ```
 
-`price` is public. `coin.value` is private — it never leaves the agent's machine.
+An x402 payment on Base is a transfer *from an address*. An m402 payment is a proof that
+*someone* holding a valid credit paid — with no address anywhere in it.
 
-**Why a credit and not NIGHT directly.** NIGHT is an unshielded token, so spending it would
-reveal the amount. The vault pools deposited NIGHT and mints a shielded credit against it
-1:1. Deposits and withdrawals are public; every payment between them is private — the same
+**Why a credit and not NIGHT directly.** NIGHT is an unshielded token, so spending it reveals
+the sender. The vault pools deposited NIGHT and mints a shielded credit against it 1:1.
+Deposits and redemptions are public; the payments between them are unlinkable — the same
 trade any shielded pool makes.
 
 ## Layout
@@ -72,7 +74,7 @@ trade any shielded pool makes.
 | Path | Contents |
 |---|---|
 | `shared/` | Types imported by every package — registry row, 402 body, payment header |
-| `contracts/` | `m402Vault.compact` — the vault: `registerService`, `deposit`, `pay`, `withdraw` |
+| `contracts/` | `m402Vault.compact` — `registerService`, `deposit`, `pay`, `redeem`, `withdraw` |
 | `gateway/` | Hono proxy, origin + relay adapters, indexer watcher |
 | `agent/` | Agent CLI — `deposit` and `call` |
 | `web/` | Marketplace and explorer |
@@ -90,6 +92,7 @@ trade any shielded pool makes.
 
 Hackathon build. Runs on Midnight **Preview**. Settlement is a vault-minted shielded credit
 backed 1:1 by pooled NIGHT; prices are entered in USD and converted once at registration.
+Agents can `redeem` unspent credit back to NIGHT at any time.
 
 Known limitations are documented rather than hidden — see
 [`docs/roadmap.md`](docs/roadmap.md#known-limitations).

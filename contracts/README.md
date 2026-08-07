@@ -2,7 +2,8 @@
 
 `m402Vault.compact` — the payment vault.
 
-Four circuits: `registerService`, `deposit`, `pay`, `withdraw`. See
+Five circuits: `registerService`, `deposit`, `pay`, `redeem`, `withdraw`, plus the pure
+`deriveServiceId`. See
 [`../docs/design.md`](../docs/design.md#3-contract--m402vaultcompact).
 
 Requires the Compact toolchain and a local proof server on `:6300`.
@@ -158,3 +159,49 @@ assert(coin.color == tokenType(creditDomain(), kernel.self()), "not an m402 cred
 
 an attacker mints their own worthless shielded token and buys API calls with it. Contract
 token colours are collision-resistant, so only this vault can mint that colour.
+
+---
+
+## Witness requirements
+
+The contract is only as safe as these four witnesses. Every one of them fails **silently** if
+implemented badly — no error, no on-chain signal, all tests green.
+
+### `nonceSeed(): Bytes<32>`
+
+Carries the unlinkability of every payment funded by a deposit.
+
+- **MUST** return 32 fresh bytes from a CSPRNG on **every** call — `crypto.getRandomValues`.
+  Never `Math.random`.
+- **MUST NOT** derive from the wallet seed, the contract address, `mintCounter`, the amount,
+  a timestamp, or anything else an observer can obtain. `evolveNonce` already mixes in the
+  public `mintCounter`, so a constant seed still yields distinct, non-colliding nonces —
+  every test passes and every payment is linkable to its depositor.
+- **MUST** be persisted to private state before the transaction is submitted. Losing it loses
+  the ability to spend the coin.
+- **MUST NOT** be logged, sent to the gateway, or included in telemetry.
+
+### `receiptSecret(): Bytes<32>`
+
+The bearer credential for one purchase.
+
+- Same entropy rules as `nonceSeed`.
+- Released **only** in the `X-Payment` header, over TLS, after the payment confirms. Anyone
+  who learns it before redemption can take the resource.
+- Persisted before submitting — it is also the selective-disclosure opening.
+
+### `creditCoin(serviceId, price): ShieldedCoinInfo`
+
+- **MUST** return a coin worth **exactly `price`**. `pay` consumes the whole coin, so a larger
+  one strands the remainder with no way to recover it. Split at the Zswap layer: spend the
+  large coin, output `price` to the vault and the rest back to yourself in the same
+  transaction — the change output's value stays hidden.
+- **MUST** verify colour and value locally before proving; the circuit asserts both, and a
+  local check turns a wasted 19s proof into an instant error.
+- **MUST NOT** accept a coin from anything the gateway controls. The gateway is untrusted.
+- **MUST** track spent coins in private state and never return one twice.
+
+### `redeemCoin(): ShieldedCoinInfo`
+
+- Returns the coin to cash out, consumed in full. Same local colour check.
+
