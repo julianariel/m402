@@ -8,13 +8,20 @@ network or the toolchain rather than taken from documentation alone.
 | Operation | Time |
 |---|---|
 | Verify a proof | **~3.4ms** |
-| `deploy` | 21.4s |
-| `registerService` | 23.4s |
-| `deposit` | 29.8s |
+| `deploy` | 21–27s |
+| `registerService` | 23–28s |
+| `deposit` | 30–32s |
 
-Measured on Midnight Preview against the real vault, 2026-08-07. A trivial contract's floor is
-~19s, so the circuit body is a modest share of the cost — most of it is fixed overhead.
-`deposit` is the heaviest so far because it mints and sends a coin on top of receiving one.
+Measured on Midnight Preview against the real vault, 2026-08-07, across two runs (Node 22.12.0
+and 24.19.0). The spread is run-to-run variance, not a runtime difference — treat any single
+number as ±20%.
+
+A trivial contract's floor is ~19s, so **the circuit body is a modest share of the cost**;
+most of it is fixed overhead, and a heavier circuit will not be proportionally slower.
+`deposit` is the current worst case because it mints and sends a coin on top of receiving one.
+
+These are prove **plus submit plus confirm**. Quote them that way, or split the phases — the
+~3.4ms verification figure is not comparable to them.
 
 **Consequence.** One proof per API call is the accepted cost of this design. Proving happens
 on the agent's machine; verification is effectively free. Amortising proof generation is

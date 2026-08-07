@@ -128,14 +128,20 @@ describe(`m402Vault (${network})`, () => {
   }, 70 * 60_000);
 
   afterAll(async () => {
+    // console, not the logger: pino-pretty runs in a worker thread that vitest can tear
+    // down before it flushes, which silently swallowed this table on the first runs.
     if (timings.length) {
-      logger.info('─'.repeat(46));
-      logger.info('Proof generation, per circuit');
-      logger.info('─'.repeat(46));
-      for (const { circuit, ms } of timings) {
-        logger.info(`  ${circuit.padEnd(24)} ${(ms / 1000).toFixed(1)}s`);
-      }
-      logger.info('─'.repeat(46));
+      const rule = '─'.repeat(46);
+      const lines = [
+        '',
+        rule,
+        `Prove + submit + confirm, per circuit (${network})`,
+        rule,
+        ...timings.map(({ circuit, ms }) => `  ${circuit.padEnd(24)} ${(ms / 1000).toFixed(1)}s`),
+        rule,
+        '',
+      ];
+      console.log(lines.join('\n'));
     }
     if (wallet) await wallet.stop();
   });

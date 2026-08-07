@@ -109,5 +109,6 @@ npx vitest run src/test/deploy.test.ts
 Requires the proof server on `127.0.0.1:6300` and a Preview wallet holding tNIGHT that is
 **registered for DUST** — NIGHT alone is not enough to submit anything.
 
-Verified on Node 24.19.0. `.nvmrc` pins 22.12.0 and `engines` allows `22.x || 24.x`; both are
-supported by the SDK, but 22 has not been exercised against Preview here.
+Verified end to end against Preview on **both Node 22.12.0 and 24.19.0** — deploy, register
+and deposit all pass on each. `.nvmrc` pins 22.12.0 and `engines` allows `22.x || 24.x`, so
+`nvm use` lands on a version that is known to work.
