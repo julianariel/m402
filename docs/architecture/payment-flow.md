@@ -1,5 +1,24 @@
 # Flow diagrams
 
+## Deposit
+
+Public by nature: unshielded NIGHT in, shielded credit out. Done once, not per call.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant A as Agent
+    participant L as Lace
+    participant V as m402Vault
+
+    A->>L: deposit(amount)
+    L->>V: unshielded NIGHT
+    V->>V: receiveUnshielded(nativeToken(), amount)
+    V->>V: mintShieldedToken(credit, amount)
+    V-->>A: shielded credit coin
+    Note over A,V: amount and address are public here<br/>and only here
+```
+
 ## Payment — native service
 
 ```mermaid
@@ -14,9 +33,9 @@ sequenceDiagram
     A->>G: GET /s/:id
     G-->>A: 402 { serviceId, price, vaultAddress }
 
-    Note over A: prove pay() locally<br/>amount stays on this machine
+    Note over A: prove pay() locally<br/>credit amount stays on this machine
     A->>V: submit pay() tx
-    V->>V: assert amount >= price<br/>insert nullifier<br/>credit merchant
+    V->>V: assert colour is m402 credit<br/>assert amount >= price<br/>insert nullifier<br/>credit merchant by public price
 
     A->>G: GET /s/:id + X-Payment: nullifier
     G->>I: watch for nullifier
@@ -70,8 +89,8 @@ sequenceDiagram
 
 ## Withdrawal
 
-The vault cannot push funds — `sendShielded` delivers only to the caller — so the merchant
-pulls.
+The payout address is read from the ledger, so no caller authentication is needed and the
+funds can only reach the registered merchant.
 
 ```mermaid
 sequenceDiagram
@@ -80,10 +99,10 @@ sequenceDiagram
     participant L as Lace
     participant V as m402Vault
 
-    M->>L: withdraw
-    L->>V: withdraw()
-    V->>V: verify key ownership
-    V-->>M: shielded NIGHT to caller
+    M->>L: withdraw(serviceId, amount)
+    L->>V: withdraw(serviceId, amount)
+    V->>V: owner = serviceOwner.lookup(serviceId)<br/>assert balance >= amount
+    V-->>M: sendUnshielded(NIGHT) to owner's address
 ```
 
 ## Selective disclosure
@@ -111,8 +130,8 @@ sequenceDiagram
 ```mermaid
 flowchart LR
     subgraph private["Agent's machine — private"]
-        amount["amount"]
-        nonce["nonce"]
+        amount["credit amount"]
+        nonce["coin nonce"]
         prover["local proof server"]
     end
 
@@ -133,4 +152,5 @@ flowchart LR
 ```
 
 `amount` and `nonce` never leave the agent's machine. The ledger records only that a payment
-of at least `price` occurred.
+of at least `price` occurred. Deposits and withdrawals sit outside this boundary and are
+public.

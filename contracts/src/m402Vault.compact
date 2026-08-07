@@ -1,0 +1,91 @@
+// m402 payment vault.
+//
+// NIGHT is an unshielded token, so it cannot itself be the private payment asset.
+// The vault pools deposited NIGHT and issues a shielded credit against it 1:1.
+// Deposits and withdrawals are public; the payments between them are not.
+pragma language_version 0.23;
+
+import CompactStandardLibrary;
+
+witness creditCoin(): ShieldedCoinInfo;   // the credit the agent is spending
+witness nonceSeed(): Bytes<32>;
+
+export ledger servicePrice:    Map<Bytes<32>, Uint<64>>;
+export ledger serviceOwner:    Map<Bytes<32>, Bytes<32>>;
+export ledger nullifiers:      Set<Bytes<32>>;
+export ledger merchantBalance: Map<Bytes<32>, Uint<64>>;
+export ledger mintCounter:     Counter;
+
+circuit creditDomain(): Bytes<32> {
+  return pad(32, "m402:credit:v1");
+}
+
+// serviceId is 32 random bytes chosen by the publisher. The guard makes
+// registration first-come and immutable: without it, anyone could re-register an
+// existing serviceId with themselves as owner and redirect the merchant's revenue.
+export circuit registerService(serviceId: Bytes<32>, price: Uint<64>, owner: Bytes<32>): [] {
+  assert(!servicePrice.member(disclose(serviceId)), "already registered");
+  servicePrice.insert(disclose(serviceId), disclose(price));
+  serviceOwner.insert(disclose(serviceId), disclose(owner));
+}
+
+// Public: who deposited and how much. Deposits are visible by design.
+export circuit deposit(amount: Uint<64>): [] {
+  receiveUnshielded(nativeToken(), disclose(amount) as Uint<128>);
+
+  const nonce = disclose(evolveNonce(mintCounter as Field as Uint<64>, nonceSeed()));
+  const coin = mintShieldedToken(
+    creditDomain(),
+    disclose(amount),
+    nonce,
+    right<ZswapCoinPublicKey, ContractAddress>(kernel.self())
+  );
+  sendImmediateShielded(
+    coin,
+    left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey()),
+    coin.value
+  );
+  mintCounter.increment(1);
+}
+
+// Private: the amount. Public: the nullifier and the merchant's price increment.
+export circuit pay(serviceId: Bytes<32>): [] {
+  assert(servicePrice.member(disclose(serviceId)), "unknown service");
+  const price = servicePrice.lookup(disclose(serviceId));
+
+  const coin = creditCoin();
+  // Without this the agent could mint a worthless token and pay with it.
+  assert(coin.color == tokenType(creditDomain(), kernel.self()), "not an m402 credit");
+  assert(coin.value >= price as Uint<128>, "underpaid");
+
+  const nullifier = persistentHash<Vector<3, Bytes<32>>>(
+    [coin.nonce, serviceId, coin.value as Bytes<32>]
+  );
+  assert(!nullifiers.member(disclose(nullifier)), "already spent");
+
+  receiveShielded(disclose(coin));
+  nullifiers.insert(disclose(nullifier));
+
+  const owner = serviceOwner.lookup(disclose(serviceId));
+  const prior = merchantBalance.member(owner) ? merchantBalance.lookup(owner) : 0 as Uint<64>;
+  merchantBalance.insert(owner, (prior + price) as Uint<64>);
+}
+
+// Pays real NIGHT out of the pool. No pot coin, no change coin, no caller auth.
+export circuit withdraw(serviceId: Bytes<32>, amount: Uint<64>): [] {
+  assert(serviceOwner.member(disclose(serviceId)), "unknown service");
+  const owner = serviceOwner.lookup(disclose(serviceId));
+
+  assert(merchantBalance.member(owner), "no balance");
+  const balance = merchantBalance.lookup(owner);
+  assert(balance >= disclose(amount), "insufficient balance");
+
+  // Recipient is a UserAddress — the merchant's unshielded Lace address.
+  sendUnshielded(
+    nativeToken(),
+    disclose(amount) as Uint<128>,
+    right<ContractAddress, UserAddress>(UserAddress { bytes: owner })
+  );
+
+  merchantBalance.insert(owner, (balance - disclose(amount)) as Uint<64>);
+}

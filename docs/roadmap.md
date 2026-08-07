@@ -48,16 +48,17 @@ rather than incrementing a public integer.
 
 ## Stablecoin settlement
 
-Settlement is shielded NIGHT. Prices are entered in USD and converted once at registration
-using a fixed rate, so the displayed USD value drifts.
+Settlement is a vault-minted shielded credit backed by pooled NIGHT. Prices are entered in
+USD and converted once at registration using a fixed rate, so the displayed USD value drifts.
 
 **Approach.** Settle in a Midnight-native USD stablecoin — [ShieldUSD](https://midnight.network/ecosystem-catalog)
 is being built for exactly this class of use case, with confidentiality and selective
 disclosure as design goals. Prices and settlement would both be USD-denominated, removing
 conversion entirely.
 
-A contract-minted credit token was considered instead. It was rejected because this design
-has no deposit step: credits would require mint, deposit, and exchange-rate circuits.
+A contract-minted credit token is what the vault already uses, because NIGHT is unshielded
+and cannot be the private payment asset. A stablecoin would replace it, removing the deposit
+step and the USD conversion together.
 
 ## Live price feed
 
@@ -118,17 +119,15 @@ Current, deliberate, and documented:
 - **Merchant call volume is public.** Payers and amounts are not.
 - **Payment and delivery are not atomic.** No refund path exists yet.
 - **The relayer is a trusted operator** for its USDC float.
-- **Withdrawal is single-operator.** The vault's pot coin is held off-chain and
-  `sendShielded` returns a change coin the caller must persist. Two merchants withdrawing
-  concurrently would race for the same pot. Fixing it means one pot coin per merchant,
-  keyed and merged on deposit.
 - **Withdrawal can be triggered by anyone.** The payout destination is read from the ledger,
-  so this cannot steal — the funds always reach the registered merchant. But `sendShielded`
-  creates no coin ciphertexts, so a payout the merchant did not initiate may not appear in
-  their wallet. Closing it means caller authentication, which on Midnight costs the merchant
-  a secret to safeguard; not worth the trade today.
-- **Funding events are visible.** The payment graph is private; the fact that an agent
-  acquired NIGHT is not.
+  so this cannot steal — the funds always reach the registered merchant's Lace address.
+  Closing it would mean caller authentication, which on Midnight costs the merchant a secret
+  to safeguard; not worth the trade.
+- **Deposits and withdrawals are public**, in amount and in address. Only the payments
+  between them are private. This is inherent to backing a shielded credit with an unshielded
+  reserve, and is the same trade a shielded pool makes everywhere.
+- **The credit is not redeemable by its holder.** An agent who deposits more than they spend
+  cannot get the remainder back; only merchants withdraw. A `redeem` circuit is the fix.
 - **Network metadata is out of scope.** The gateway observes IP addresses and timing. m402
   addresses protocol-level privacy: agents authenticate with a proof rather than an account,
   so the gateway never learns who is paying or how much.

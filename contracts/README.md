@@ -2,7 +2,7 @@
 
 `m402Vault.compact` — the payment vault.
 
-Three circuits: `registerService`, `pay`, `withdraw`. See
+Four circuits: `registerService`, `deposit`, `pay`, `withdraw`. See
 [`../docs/design.md`](../docs/design.md#3-contract--m402vaultcompact).
 
 Requires the Compact toolchain and a local proof server on `:6300`.
@@ -34,7 +34,26 @@ circuit sendShielded(input: QualifiedShieldedCoinInfo,
                      recipient: Either<ZswapCoinPublicKey, ContractAddress>,
                      value: Uint<128>): ShieldedSendResult;
 circuit sendImmediateShielded(input: ShieldedCoinInfo, ...): ShieldedSendResult;  // fresh coins only
+circuit mintShieldedToken(domainSep: Bytes<32>, value: Uint<64>, nonce: Bytes<32>,
+                          recipient: Either<ZswapCoinPublicKey, ContractAddress>): ShieldedCoinInfo;
+circuit tokenType(domainSep: Bytes<32>, contract: ContractAddress): Bytes<32>;
+circuit nativeToken(): Bytes<32>;
 ```
+
+### Unshielded value
+
+Note the **argument order differs** from the shielded pair, and the recipient is a
+`UserAddress`, not a `ZswapCoinPublicKey`:
+
+```compact
+circuit receiveUnshielded(color: Bytes<32>, amount: Uint<128>): [];
+circuit sendUnshielded(color: Bytes<32>, value: Uint<128>,
+                       recipient: Either<ContractAddress, UserAddress>): [];
+```
+
+`right<ContractAddress, UserAddress>(UserAddress { bytes: owner })` targets a user's
+unshielded Lace address. Unlike `sendShielded`, this has no coin-ciphertext restriction, so a
+contract can pay any address — not only its caller.
 
 `receiveShielded` takes a **coin, not an amount**. The amount is `coin.value`, a
 `Uint<128>` — compare it against a `Uint<64>` price with an explicit cast.
@@ -101,29 +120,41 @@ circuit**. The only sound caller check is hash-of-secret,
 rather than from the caller, so any caller sends the funds to the registered merchant.
 Nothing to steal, nothing to authenticate, and merchant identity stays a Lace address.
 
-Constructing a recipient from stored bytes:
-
-```compact
-left<ZswapCoinPublicKey, ContractAddress>(ZswapCoinPublicKey { bytes: owner })
-```
-
 Reach for hash-of-secret only where a circuit must restrict *who acts*, not merely *where
 value lands*.
 
+`ownPublicKey()` stays correct as a *destination* — `deposit` uses it to route the minted
+credit to the caller, and a caller who lies only misdirects their own deposit.
+
 ---
 
-## Custody: why the pot is not in ledger state
+## Why the payment asset is a minted credit, not NIGHT
 
-Ledger state is public, including a `QualifiedShieldedCoinInfo` stored in a cell — its
-`value` field is readable by anyone. A contract that holds its pot in a ledger cell
-publishes the pot total on every payment, and consecutive totals differ by exactly the
-amount paid. That would defeat `pay`'s entire purpose.
+`nativeToken()` returns an `UnshieldedTokenType`, and shielded and unshielded token types are
+separately tagged namespaces. **There is no shielded NIGHT** — the tokenomics whitepaper says
+so outright. NIGHT therefore cannot be the private payment asset.
 
-So the vault keeps **no coin in ledger state**. Public state is `merchantBalance` only,
-which moves by the public `price`. The spendable pot is supplied to `withdraw` as a
-witness; Zswap independently validates that the coin is real and contract-owned, and the
-circuit bounds the payout by the recorded balance.
+The vault pools deposited NIGHT and mints a shielded credit against it 1:1:
 
-The consequence is that `sendShielded`'s change coin must be persisted off-chain by
-whoever calls `withdraw`, and two merchants withdrawing concurrently would race for the
-same pot coin. Single-operator only for now.
+| Circuit | Asset | Visibility |
+|---|---|---|
+| `deposit`  | unshielded NIGHT in, shielded credit out | public |
+| `pay`      | shielded credit | **private** |
+| `withdraw` | unshielded NIGHT out | public |
+
+Two rules follow, and neither is optional.
+
+**Never put a coin in ledger state.** Ledger state is public in full, including a
+`QualifiedShieldedCoinInfo`'s `value`. A pot held there would publish its total after every
+payment, and consecutive totals differ by exactly the amount paid. The pool's NIGHT balance is
+public, but it moves only on deposit and withdrawal — never on payment — so payments cannot be
+recovered by differencing it.
+
+**Always assert the coin colour in `pay`.** `receiveShielded` does not check it. Without
+
+```compact
+assert(coin.color == tokenType(creditDomain(), kernel.self()), "not an m402 credit");
+```
+
+an attacker mints their own worthless shielded token and buys API calls with it. Contract
+token colours are collision-resistant, so only this vault can mint that colour.
