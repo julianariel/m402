@@ -9,12 +9,17 @@ Tooling decisions, so four directories built in parallel stay compatible.
   dependency problem. Check `node -v` first.
 - **TypeScript**, ESM throughout.
 - **npm workspaces.** Ships with Node, so there is no install step for anyone joining.
-- **Not Bun.** Midnight publishes a [Bun guide](https://docs.midnight.network/how-to/bun-runtime-midnight)
-  and their own indexer QA tooling uses it — but as a package manager and launcher, with
-  vitest still running under Node. The SDK carries WASM and `better-sqlite3` is a native
-  module, and the guide's own limitations section flags native-module compatibility. Two
-  runtimes for three people to keep straight is not worth the install-time saving. One
-  lockfile, `package-lock.json`.
+- **Not Bun**, and not for compatibility reasons — it works. Bun loads the SDK, its WASM, and
+  the native `classic-level` binding without complaint, and it starts **~2.5x faster**
+  (500–620ms vs 1000–1870ms to import the SDK and initialise WASM).
+
+  It does not help, because startup is not where the time goes. A measured `contracts` run
+  against Preview takes ~228s: ~140s wallet sync over the network, ~87s of proof generation
+  in the Docker proof server, ~11s in `compact compile` — a standalone binary — and ~2s of
+  Node startup. Bun saves about one second in 228. The bottleneck runs no JavaScript.
+
+  `bun install` *is* meaningfully faster than npm, but the monorepo has one lockfile, so it
+  is an all-or-nothing call. One lockfile, `package-lock.json`.
 - **Vitest** for tests. Proof generation dominates, so timeouts are raised in
   `contracts/vitest.config.ts` — a single circuit call is 20–30s and remote wallet sync can
   take minutes. Default timeouts fail before anything real happens.
