@@ -38,6 +38,15 @@ has spent without receiving anything. The gateway health-checks origins before r
 **Approach.** The same refund circuit that arbitrary-URL relaying needs: return the unspent
 amount to the payer when delivery fails. One circuit unlocks both features.
 
+## A larger anonymity set
+
+Payments are unlinkable only among other payments in the pool, and the pool is small.
+
+**Approach.** Fixed-denomination credits, so amounts stop distinguishing payments; a deposit
+queue that batches several agents' funding into one transaction; and a wallet default that
+deposits more than the immediate need. The Chaumian e-cash work above delivers the first of
+these as a side effect.
+
 ## Private merchant volume
 
 `merchantBalance` increases by a public `price`, so call volume per service is observable.
@@ -126,6 +135,17 @@ Current, deliberate, and documented:
 - **Deposits and withdrawals are public**, in amount and in address. Only the payments
   between them are private. This is inherent to backing a shielded credit with an unshielded
   reserve, and is the same trade a shielded pool makes everywhere.
+- **Privacy is bounded by the anonymity set.** An individual payment is unlinkable only among
+  the other payments drawn from the pool. With one depositor and a handful of calls, an
+  observer correlates a public deposit with the nullifiers that follow it, by amount and by
+  timing — separate transactions are not enough on their own. This is a property of usage
+  rather than of the contract, and it is the same caveat every shielded pool carries.
+
+  Three things raise it, none of which need code: deposit **round amounts** well above any
+  single price, deposit **ahead of time** rather than immediately before spending, and have
+  **more than one agent** funding the pool. Deposit and payment must never share a
+  transaction — that would bind amount, payer and nullifier into one public record and make
+  the proof pointless.
 - **The credit is not redeemable by its holder.** An agent who deposits more than they spend
   cannot get the remainder back; only merchants withdraw. A `redeem` circuit is the fix.
 - **Network metadata is out of scope.** The gateway observes IP addresses and timing. m402

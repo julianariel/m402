@@ -7,8 +7,13 @@ every payment reveals who paid, whom, how much, and how often. That exposes an a
 strategy, usage volume, and counterparties.
 
 m402 implements the same 402-and-retry flow on Midnight. The merchant learns that a correct
-payment happened. The chain records that someone paid **at least** the asking price — not the
-amount, not the payer.
+payment happened. The chain records that someone paid **at least** the asking price — the
+payment itself carries neither the amount nor the payer.
+
+Agents fund a shielded pool first, and that funding step is public. Privacy comes from the
+gap between funding and spending, so it is as strong as the pool is busy — the standard
+shielded-pool property, spelled out in
+[known limitations](docs/roadmap.md#known-limitations).
 
 ## Two surfaces, one rail
 
