@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./pure": "./src/pure.ts"
+  },
   "scripts": {
     "compile": "compact compile src/m402Vault.compact src/managed/m402Vault",
     "deploy": "MIDNIGHT_NETWORK=preview vitest run src/test/deploy.test.ts",
