@@ -66,16 +66,18 @@ trade any shielded pool makes.
 
 | Path | Contents |
 |---|---|
+| `shared/` | Types imported by every package — registry row, 402 body, payment header |
 | `contracts/` | `m402Vault.compact` — the vault: `registerService`, `deposit`, `pay`, `withdraw` |
-| `gateway/` | Proxy, origin + relay adapters, indexer watcher |
-| `agent/` | Agent CLI and SDK |
+| `gateway/` | Hono proxy, origin + relay adapters, indexer watcher |
+| `agent/` | Agent CLI — `deposit` and `call` |
 | `web/` | Marketplace and explorer |
-| `docs/` | Design, platform constraints, roadmap, diagrams |
+| `docs/` | Design, platform constraints, stack, roadmap, diagrams |
 
 ## Docs
 
 - [`docs/design.md`](docs/design.md) — architecture, contract, gateway, failure modes
 - [`docs/constraints.md`](docs/constraints.md) — measured Midnight platform limits that shape the design
+- [`docs/stack.md`](docs/stack.md) — tooling decisions and repo layout
 - [`docs/roadmap.md`](docs/roadmap.md) — deferred scope and known limitations
 - [`docs/architecture/payment-flow.md`](docs/architecture/payment-flow.md) — value lifecycle, sequence diagrams, trust boundaries
 
