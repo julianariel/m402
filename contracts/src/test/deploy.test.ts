@@ -200,13 +200,12 @@ describe(`m402Vault (${network})`, () => {
 
     const state = await readLedger();
     expect(state.servicePrice.isEmpty()).toBe(true);
-    expect(state.nullifiers.isEmpty()).toBe(true);
     expect(state.receipts.isEmpty()).toBe(true);
   }, 10 * 60_000);
 
   it('registers a service under an id derived from the owner', async () => {
     // deriveServiceId is pure — the gateway and web app get the same id with no proof.
-    serviceId = pureCircuits.deriveServiceId(merchantOwner, salt);
+    serviceId = pureCircuits.deriveServiceId(merchantOwner, salt, PRICE);
 
     await timed('registerService', () =>
       (submitCallTx<Contract, 'registerService'>)(providers, {
@@ -224,11 +223,23 @@ describe(`m402Vault (${network})`, () => {
     expect(state.serviceOwner.lookup(serviceId)).toEqual(merchantOwner);
   }, 10 * 60_000);
 
-  it('rejects a front-run: a different owner with the same salt gets a different id', async () => {
+  it('resists front-running on both owner and price', async () => {
+    // Substituted owner: the original fix.
     const attacker = new Uint8Array(randomBytes(32));
-    const attackerId = pureCircuits.deriveServiceId(attacker, salt);
-    // The whole point of deriving the id from the owner.
-    expect(Buffer.from(attackerId).equals(Buffer.from(serviceId))).toBe(false);
+    expect(
+      Buffer.from(pureCircuits.deriveServiceId(attacker, salt, PRICE)).equals(
+        Buffer.from(serviceId),
+      ),
+    ).toBe(false);
+
+    // Substituted PRICE, keeping the victim's owner and salt. This is the attack the
+    // owner-only derivation left open: land first at price 1 and the merchant owns a
+    // service permanently priced at 1, because registration is immutable.
+    expect(
+      Buffer.from(pureCircuits.deriveServiceId(merchantOwner, salt, 1n)).equals(
+        Buffer.from(serviceId),
+      ),
+    ).toBe(false);
   });
 
   it('deposits NIGHT and receives shielded credit', async () => {
@@ -265,17 +276,22 @@ describe(`m402Vault (${network})`, () => {
 
     const state = await readLedger();
 
-    // One nullifier and one receipt, and the merchant credited the PUBLIC price —
-    // not whatever the coin was worth.
-    expect(state.nullifiers.size()).toEqual(1n);
+    // One receipt, and the merchant credited the PUBLIC price.
     expect(state.receipts.size()).toEqual(1n);
     expect(state.merchantBalance.lookup(merchantOwner)).toEqual(PRICE);
 
-    // The receipt on-chain is a hash. The secret that opens it never left the
-    // agent, which is what stops an indexer subscriber stealing the purchase.
     const secret = (await providers.privateStateProvider.get(PRIVATE_STATE_ID))
       ?.lastReceiptSecret;
     expect(secret).toBeInstanceOf(Uint8Array);
+
+    // THE property selective disclosure depends on: the retained secret actually
+    // opens the on-chain receipt. Asserting only that the raw secret is absent from
+    // the set passes vacuously, even if the secret is unrelated to the receipt.
+    const opening = pureCircuits.deriveReceipt(secret as Uint8Array, serviceId);
+    expect(state.receipts.member(opening)).toBe(true);
+
+    // And the secret itself is not what is published, so an indexer subscriber
+    // cannot lift a redemption credential off the chain.
     expect(state.receipts.member(secret as Uint8Array)).toBe(false);
   }, 10 * 60_000);
 
@@ -293,7 +309,7 @@ describe(`m402Vault (${network})`, () => {
     );
 
     const state = await readLedger();
-    expect(state.nullifiers.size()).toEqual(2n);
+    expect(state.receipts.size()).toEqual(2n);
     expect(state.merchantBalance.lookup(merchantOwner)).toEqual(PRICE * 2n);
   }, 10 * 60_000);
 
@@ -434,8 +450,40 @@ describe(`m402Vault (${network})`, () => {
     it('pay rejects underpayment', async () => {
       // The core solvency assert. If this passes, there is no payment guarantee at all.
       const short = hostile({ value: (p) => p - 1n });
-      await expect(call('pay', [serviceId], short)).rejects.toThrow(/underpaid/);
+      await expect(call('pay', [serviceId], short)).rejects.toThrow(/wrong amount/);
     });
+
+    it('pay rejects overpayment', async () => {
+      // pay consumes the whole coin but credits only price, so an overpaying coin
+      // burns the difference. == closes it; >= left it open.
+      const over = hostile({ value: (p) => p + 1n });
+      await expect(call('pay', [serviceId], over)).rejects.toThrow(/wrong amount/);
+    });
+
+    it('measures whether concurrent writes to the same contract conflict (H4)', async () => {
+      // registerService touches no coins, so anything that fails here is contract-level
+      // contention, not wallet coin selection. If distinct-key Map inserts conflict
+      // contract-wide, one of these must fail.
+      const mk = () => {
+        const o = new Uint8Array(randomBytes(32));
+        const sl = new Uint8Array(randomBytes(32));
+        return call('registerService', [sl, PRICE, o]);
+      };
+
+      const results = await Promise.allSettled([mk(), mk()]);
+      const ok = results.filter((r) => r.status === 'fulfilled').length;
+
+      // console, not the logger: pino's transport is torn down before it flushes.
+      console.log(`\nCONCURRENCY: ${ok} of 2 concurrent registerService calls succeeded`);
+      for (const r of results) {
+        if (r.status === 'rejected') console.log(`  rejected: ${String(r.reason).slice(0, 200)}`);
+      }
+
+      // Measured, not asserted. Observed 1/2 and 0/2 across runs, never 2/2:
+      // writes to one contract conflict contract-wide, so throughput is roughly one
+      // per block regardless of which key is touched. Recorded in constraints.md.
+      expect(ok).toBeLessThanOrEqual(2);
+    }, 10 * 60_000);
 
     it('pay rejects an unknown service', async () => {
       const unknown = new Uint8Array(randomBytes(32));
