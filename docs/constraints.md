@@ -7,11 +7,14 @@ network or the toolchain rather than taken from documentation alone.
 
 | Operation | Time |
 |---|---|
-| Generate a proof (trivial circuit) | **~19s** |
 | Verify a proof | **~3.4ms** |
+| `deploy` | 21.4s |
+| `registerService` | 23.4s |
+| `deposit` | 29.8s |
 
-Measured on Midnight Preview with a minimal contract: deploy 20.2s, single state write 18.7s.
-This is the floor, not a loaded case — a more complex circuit will not be faster.
+Measured on Midnight Preview against the real vault, 2026-08-07. A trivial contract's floor is
+~19s, so the circuit body is a modest share of the cost — most of it is fixed overhead.
+`deposit` is the heaviest so far because it mints and sends a coin on top of receiving one.
 
 **Consequence.** One proof per API call is the accepted cost of this design. Proving happens
 on the agent's machine; verification is effectively free. Amortising proof generation is
@@ -99,6 +102,24 @@ bridging is post-mainnet. EVM connectivity exists today only as third-party work
 
 **Consequence.** The relayer fronts USDC as a trusted operator and is reimbursed from the
 vault. It is not a bridge, and the design does not claim to be one.
+
+## Unshielded inputs must be signed
+
+Any circuit that touches unshielded value — m402's `deposit`, via `receiveUnshielded` —
+pulls a NIGHT UTXO into the transaction, and UTXO inputs carry Schnorr signatures. Balancing
+alone does not add them:
+
+```ts
+const recipe = await wallet.balanceUnboundTransaction(tx, keys, { ttl });
+const signed = await wallet.signRecipe(recipe, (p) => keystore.signData(p));  // required
+return wallet.finalizeRecipe(signed);
+```
+
+Omitting `signRecipe` gets the transaction all the way through proving and then rejected by
+the node with `1010 Invalid Transaction: Custom error: 192`
+(`InputsSignaturesLengthMismatch`) — one input, zero signatures. Shielded-only calls such as
+`deploy` and `registerService` succeed without it, so the bug only appears once a circuit
+touches NIGHT.
 
 ## Node version
 
