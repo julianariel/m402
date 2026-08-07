@@ -9,8 +9,11 @@ network or the toolchain rather than taken from documentation alone.
 |---|---|
 | Verify a proof | **~3.4ms** |
 | `deploy` | 21–27s |
-| `registerService` | 23–28s |
-| `deposit` | 30–32s |
+| `registerService` | 22–28s |
+| `deposit` | 22–32s |
+| `pay` | 23–25s |
+| `redeem` | 22–24s |
+| `withdraw` | 18–23s |
 
 Measured on Midnight Preview against the real vault, 2026-08-07, across two runs (Node 22.12.0
 and 24.19.0). The spread is run-to-run variance, not a runtime difference — treat any single
@@ -109,6 +112,17 @@ bridging is post-mainnet. EVM connectivity exists today only as third-party work
 
 **Consequence.** The relayer fronts USDC as a trusted operator and is reimbursed from the
 vault. It is not a bridge, and the design does not claim to be one.
+
+## Contract-held unshielded balances are not indexed
+
+`queryUnshieldedBalances(contractAddress)` returns an empty array for a contract that
+demonstrably holds NIGHT — `redeem` and `withdraw` both spend from the reserve
+successfully, which a zero balance would block.
+
+**Consequence.** The vault's reserve cannot be read from the indexer. Assert solvency from
+the payer's own wallet instead: deposit lowers the agent's NIGHT, redeem raises it, and
+payments move neither. That is direct evidence rather than a report, and it is what
+`deploy.test.ts` does.
 
 ## Unshielded inputs must be signed
 
