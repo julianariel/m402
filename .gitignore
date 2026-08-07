@@ -27,6 +27,11 @@ managed/
 logs/
 *.log
 
+# Encrypted private-state store. Holds contract private state — nonce seeds and
+# receipt secrets — and the dev password lives in source, so treat it as plaintext.
+midnight-level-db/
+*.ldb
+
 # OS / editor
 .DS_Store
 .idea/
