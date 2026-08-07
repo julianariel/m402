@@ -132,6 +132,9 @@ touches NIGHT.
 
 The Midnight SDK's ESM exports fail to resolve on Node 23 and Node 26. **Node 22 or 24 only.**
 
+Midnight documents 22 as the floor and pins **24** in its own `example-hello-world` template;
+this repo follows the template. Both 22.12.0 and 24.19.0 are verified against Preview here.
+
 Failures surface as `ERR_PACKAGE_PATH_NOT_EXPORTED` inside a `tsx` stack trace, which reads
 like a dependency problem rather than a runtime-version problem. Check `node -v` first.
 

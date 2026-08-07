@@ -110,5 +110,9 @@ Requires the proof server on `127.0.0.1:6300` and a Preview wallet holding tNIGH
 **registered for DUST** — NIGHT alone is not enough to submit anything.
 
 Verified end to end against Preview on **both Node 22.12.0 and 24.19.0** — deploy, register
-and deposit all pass on each. `.nvmrc` pins 22.12.0 and `engines` allows `22.x || 24.x`, so
-`nvm use` lands on a version that is known to work.
+and deposit pass on each.
+
+`.nvmrc` pins **24**, matching Midnight's own `example-hello-world` template. The docs give
+22 as the supported floor (`engines: >=22`), but 24 is the version their example actually
+runs, so it is the better-exercised path. `engines` here allows `22.x || 24.x`, so a
+teammate already on 22 is not blocked.
