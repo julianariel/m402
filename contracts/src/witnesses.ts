@@ -1,5 +1,16 @@
 import { randomBytes } from 'node:crypto';
-import type { ShieldedCoinInfo } from '@midnight-ntwrk/midnight-js-protocol/compact-runtime';
+import {
+  createShieldedCoinInfo,
+  encodeShieldedCoinInfo,
+} from '@midnight-ntwrk/midnight-js-protocol/ledger';
+import { fromHex, toHex } from '@midnight-ntwrk/midnight-js-utils';
+import { pureCircuits, type Witnesses } from './managed/m402Vault/contract/index.js';
+
+/**
+ * A coin in Compact's representation — `color`, not the ledger's `type`, and raw bytes
+ * rather than hex. `encodeShieldedCoinInfo` converts between the two.
+ */
+type CompactCoin = { nonce: Uint8Array; color: Uint8Array; value: bigint };
 
 /**
  * Private state for an m402 agent.
@@ -9,13 +20,11 @@ import type { ShieldedCoinInfo } from '@midnight-ntwrk/midnight-js-protocol/comp
  */
 export type M402PrivateState = {
   /** Unspent credit coins, most recent first. */
-  readonly credits: readonly ShieldedCoinInfo[];
+  readonly credits: readonly CompactCoin[];
   /** serviceId hex -> the receipt secrets used against it. */
   readonly receiptSecrets: Readonly<Record<string, readonly Uint8Array[]>>;
-  /** Set by the caller before `pay`, so `creditCoin` returns the right coin. */
-  readonly pendingCoin?: ShieldedCoinInfo;
-  /** Set by the caller before `redeem`. */
-  readonly pendingRedeem?: ShieldedCoinInfo;
+  /** Amount to cash out; set by the caller before `redeem`. */
+  readonly pendingRedeem?: bigint;
   /** Last values handed to the circuit, so the caller can persist them after. */
   readonly lastNonceSeed?: Uint8Array;
   readonly lastReceiptSecret?: Uint8Array;
@@ -26,7 +35,7 @@ export const emptyPrivateState = (): M402PrivateState => ({
   receiptSecrets: {},
 });
 
-type Ctx = { privateState: M402PrivateState };
+type Ctx = { privateState: M402PrivateState; contractAddress: string };
 
 /**
  * Fresh CSPRNG bytes, every call. This single function carries the unlinkability
@@ -58,43 +67,47 @@ export const receiptSecret = (
 };
 
 /**
- * The coin to spend. `pay` consumes it in full, so this MUST be worth exactly
- * `price` — the wallet splits a larger coin at the Zswap layer beforehand,
- * sending `price` to the vault and the remainder back to itself in the same
- * transaction. Returning a larger coin strands the difference with no error.
+ * The coin handed to the vault.
+ *
+ * This *describes an output*, it does not pick an existing coin. `receiveShielded`
+ * requires a coin of this colour and value to appear as an output to the contract,
+ * and the wallet's balancing step funds it — spending a larger credit coin and
+ * returning the remainder to itself as a hidden-value Zswap output. So the split
+ * happens at the Zswap layer for free, and `pay` consuming the whole coin costs
+ * nothing.
+ *
+ * Value is exactly `price`. The circuit accepts `>=`, but anything above `price`
+ * would land in the pool unclaimable.
  */
 export const creditCoin = (
   ctx: Ctx,
   _serviceId: Uint8Array,
   price: bigint,
-): [M402PrivateState, ShieldedCoinInfo] => {
-  const coin = ctx.privateState.pendingCoin;
-  if (!coin) {
-    throw new Error(
-      'creditCoin: no pendingCoin in private state. Select and split the coin before calling pay().',
-    );
-  }
-  if (coin.value !== price) {
-    throw new Error(
-      `creditCoin: coin value ${coin.value} != price ${price}. pay() consumes the whole coin — ` +
-        'split it to exactly the price first, or the difference is unrecoverable.',
-    );
-  }
-  return [ctx.privateState, coin];
+): [M402PrivateState, CompactCoin] => {
+  const color = pureCircuits.creditColor({ bytes: fromHex(ctx.contractAddress) });
+  return [ctx.privateState, encodeShieldedCoinInfo(createShieldedCoinInfo(toHex(color), price))];
 };
 
-/** The coin to cash out. Consumed in full. */
+/**
+ * The coin to cash out, consumed in full. `amount` comes from private state because
+ * `redeem` takes only a recipient — the value is whatever coin we hand it.
+ */
 export const redeemCoin = (
   ctx: Ctx,
-): [M402PrivateState, ShieldedCoinInfo] => {
-  const coin = ctx.privateState.pendingRedeem;
-  if (!coin) {
-    throw new Error('redeemCoin: no pendingRedeem in private state.');
+): [M402PrivateState, CompactCoin] => {
+  const amount = ctx.privateState.pendingRedeem;
+  if (amount === undefined) {
+    throw new Error('redeemCoin: set pendingRedeem to the amount to cash out before calling redeem().');
   }
-  return [ctx.privateState, coin];
+  const color = pureCircuits.creditColor({ bytes: fromHex(ctx.contractAddress) });
+  return [ctx.privateState, encodeShieldedCoinInfo(createShieldedCoinInfo(toHex(color), amount))];
 };
 
-export const witnesses = {
+/**
+ * Typed against the compiler's own `Witnesses` shape, so changing a witness signature
+ * in the contract fails the build here rather than at proving time.
+ */
+export const witnesses: Witnesses<M402PrivateState> = {
   nonceSeed,
   receiptSecret,
   creditCoin,

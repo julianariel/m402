@@ -35,6 +35,13 @@ export ledger mintCounter:     Counter;
 
 pure circuit creditDomain(): Bytes<32> { return pad(32, "m402:credit:v1"); }
 
+// The colour of this vault's credit. Exported and pure so the agent can derive it
+// off-chain with no proof, and build a coin of the right colour before calling pay.
+// Pass kernel.self() from the caller's side; a pure circuit has no ledger access.
+export pure circuit creditColor(self: ContractAddress): Bytes<32> {
+  return tokenType(creditDomain(), self);
+}
+
 // serviceId is derived from the owner, not chosen freely. A front-runner who copies an
 // in-flight registration and substitutes their own address necessarily produces a
 // DIFFERENT serviceId, so they cannot capture the merchant's. Exported so the gateway

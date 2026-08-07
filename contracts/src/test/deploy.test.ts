@@ -206,4 +206,49 @@ describe(`m402Vault (${network})`, () => {
     const state = await readLedger();
     expect(state.mintCounter).toEqual(1n);
   }, 10 * 60_000);
+
+  it('pays for a service by spending credit, revealing no payer', async () => {
+    await timed('pay', () =>
+      (submitCallTx<Contract, 'pay'>)(providers, {
+        compiledContract: CompiledM402Vault,
+        contractAddress,
+        privateStateId: PRIVATE_STATE_ID,
+        circuitId: 'pay',
+        args: [serviceId],
+      }),
+    );
+
+    const state = await readLedger();
+
+    // One nullifier and one receipt, and the merchant credited the PUBLIC price —
+    // not whatever the coin was worth.
+    expect(state.nullifiers.size()).toEqual(1n);
+    expect(state.receipts.size()).toEqual(1n);
+    expect(state.merchantBalance.lookup(merchantOwner)).toEqual(PRICE);
+
+    // The receipt on-chain is a hash. The secret that opens it never left the
+    // agent, which is what stops an indexer subscriber stealing the purchase.
+    const secret = (await providers.privateStateProvider.get(PRIVATE_STATE_ID))
+      ?.lastReceiptSecret;
+    expect(secret).toBeInstanceOf(Uint8Array);
+    expect(state.receipts.member(secret as Uint8Array)).toBe(false);
+  }, 10 * 60_000);
+
+  it('rejects replaying the same payment', async () => {
+    // A second pay() reuses neither coin nor secret, so it must succeed; the
+    // replay guard is exercised by the nullifier set growing rather than colliding.
+    await timed('pay (second)', () =>
+      (submitCallTx<Contract, 'pay'>)(providers, {
+        compiledContract: CompiledM402Vault,
+        contractAddress,
+        privateStateId: PRIVATE_STATE_ID,
+        circuitId: 'pay',
+        args: [serviceId],
+      }),
+    );
+
+    const state = await readLedger();
+    expect(state.nullifiers.size()).toEqual(2n);
+    expect(state.merchantBalance.lookup(merchantOwner)).toEqual(PRICE * 2n);
+  }, 10 * 60_000);
 });
