@@ -100,10 +100,9 @@ sequenceDiagram
     Note over A: prove pay() locally — ~19s<br/>no address goes into this transaction
     A->>V: submit pay() tx
     V->>V: assert colour == m402 credit
-    V->>V: assert value >= price
-    V->>V: nullifier = hash(domain, coin.nonce, serviceId)
-    V->>V: receipt = hash(domain, receiptSecret, serviceId)
-    V->>V: assert both unseen, then insert
+    V->>V: assert value == price
+    V->>V: receipt = deriveReceipt(receiptSecret, serviceId)
+    V->>V: assert receipt unseen, then insert
     V->>V: merchantBalance += price
 
     A->>G: GET /s/:id + X-Payment: receiptSecret
@@ -117,9 +116,11 @@ sequenceDiagram
 
 Two things here are not optional. The **colour assert** — `receiveShielded` does not check
 what token it receives, so without it any minted token would buy API calls. And the
-**receipt**: the nullifier is public, so if it were the redemption credential, anyone
-watching the indexer could claim the resource first. Only the hash of the secret is
-published.
+**receipt**: only `deriveReceipt(secret, serviceId)` is published, so an observer watching
+the indexer cannot lift a redemption credential off the chain.
+
+The amount is `==`, not `>=`. `pay` consumes the whole coin but credits only `price`, so an
+overpaying coin would burn the difference.
 
 ## Payment — relayed x402 service
 
@@ -133,7 +134,7 @@ sequenceDiagram
     participant R as Relayer
     participant X as x402 service (EVM)
 
-    Note over A,G: 402 → pay() → nullifier confirmed<br/>(as above)
+    Note over A,G: 402 → pay() → receipt confirmed<br/>(as above)
 
     G->>R: dispatch, type = "relay"
     R->>X: GET resource
@@ -229,7 +230,7 @@ flowchart TB
     end
 
     subgraph chain["Midnight ledger — public"]
-        nullifier["nullifier"]
+        receipt["receipt hash"]
         price["price"]
         volume["merchant volume"]
         reserve["pooled NIGHT reserve"]
@@ -243,8 +244,8 @@ flowchart TB
     who --> prover
     nonce --> prover
     secret --> prover
-    prover --> nullifier
-    price --> nullifier
+    prover --> receipt
+    price --> receipt
 ```
 
 **No address appears in a payment.** `pay` takes no payer argument and reads no caller

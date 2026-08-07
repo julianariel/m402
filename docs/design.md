@@ -61,11 +61,10 @@ The agent submits its own transaction. The gateway only reads the chain: it hold
 signs nothing, and cannot fabricate a payment. Step 5 is a GraphQL-WS subscription against
 the indexer.
 
-**Step 4 sends the receipt *secret*, never the nullifier.** The nullifier is public on-chain;
-anyone subscribed to the indexer could see one land and redeem the purchase before the honest
-agent retried. Only the hash of the secret is published, so possession of the secret is what
-proves the purchase. The gateway must also record consumed secrets locally — the on-chain set
-proves a payment happened, not that it is unspent.
+**Step 4 sends the receipt *secret*, never anything read off the chain.** Only
+`deriveReceipt(secret, serviceId)` is published, so possession of the secret is what proves
+the purchase. The gateway must also record consumed secrets locally — the on-chain set proves
+a payment happened, never that it is still unspent.
 
 Diagrams for each step: [`architecture/payment-flow.md`](architecture/payment-flow.md).
 
@@ -80,7 +79,6 @@ witness requirements are in [`../contracts/README.md`](../contracts/README.md).
 ```compact
 export ledger servicePrice:    Map<Bytes<32>, Uint<64>>;  // serviceId -> price in STAR
 export ledger serviceOwner:    Map<Bytes<32>, Bytes<32>>; // serviceId -> merchant UserAddress
-export ledger nullifiers:      Set<Bytes<32>>;            // replay guard
 export ledger receipts:        Set<Bytes<32>>;            // hashed redemption credentials
 export ledger merchantBalance: Map<Bytes<32>, Uint<64>>;  // claimable
 export ledger mintCounter:     Counter;                   // deposit nonce index
@@ -154,20 +152,14 @@ export circuit pay(serviceId: Bytes<32>): [] {
 
   const coin = creditCoin(sid, price);
   assert(coin.color == tokenType(creditDomain(), kernel.self()), "not an m402 credit");
-  assert(coin.value >= price as Uint<128>, "underpaid");
+  // Not >=. pay consumes the WHOLE coin but credits only price, so an overpaying
+  // coin burns the difference into NIGHT no circuit can release.
+  assert(coin.value == price as Uint<128>, "wrong amount");
 
-  const nullifier = persistentHash<Vector<3, Bytes<32>>>(
-    [pad(32, "m402:nul:v1"), coin.nonce, sid]
-  );
-  assert(!nullifiers.member(disclose(nullifier)), "already spent");
-
-  const receipt = persistentHash<Vector<3, Bytes<32>>>(
-    [pad(32, "m402:receipt:v1"), receiptSecret(), sid]
-  );
+  const receipt = deriveReceipt(receiptSecret(), sid);
   assert(!receipts.member(disclose(receipt)), "receipt reused");
 
   receiveShielded(disclose(coin));
-  nullifiers.insert(disclose(nullifier));
   receipts.insert(disclose(receipt));
 
   const owner = serviceOwner.lookup(sid);
@@ -182,11 +174,17 @@ Three things here are load-bearing.
 an attacker mints their own worthless shielded token and buys API calls with it. Contract
 token colours are collision-resistant, so only this vault can mint that colour.
 
-**The receipt, and why it is not the nullifier.** The nullifier is written to a public set.
-If it were also the redemption credential, anyone watching the indexer could see one land and
-claim the resource before the honest agent retried — and replay it forever. The receipt
-publishes only `hash(domain, secret, serviceId)`; the payer keeps the secret and presents it
-to the gateway.
+**The receipt is the credential, and only its hash is public.** `receipts` holds
+`deriveReceipt(secret, serviceId)`; the payer keeps the secret and presents it to the
+gateway. Publishing the credential itself would let anyone watching the indexer claim the
+resource before the honest agent retried, and replay it forever.
+
+**There is no nullifier.** An earlier version kept one as a replay guard. Zswap already
+prevents spending the same coin twice, so it guarded nothing, cost a set write in the
+hottest circuit, grew without bound, and could reject an honest payment on a nonce
+collision. Its only secret input was a coin nonce, which is public for a deposit-minted
+coin — a future `creditCoin` that reused such a coin would have made every payment
+recomputable from public data, silently.
 
 **`creditCoin` is parameterised.** `pay` consumes the whole coin, so the wallet must supply
 one worth exactly `price`. A zero-argument witness could not know the price and would return
@@ -251,10 +249,13 @@ auditor, the payer hands over that payment's secret; the auditor recomputes the 
 checks membership on the public ledger. It proves *this payment, to this service, by me* and
 reveals nothing about any other payment.
 
-The nullifier is deliberately **not** a commitment to the amount. It is a hash, not a hiding
-commitment, and its only secret input is a coin nonce chosen for a different purpose —
-handing that to an auditor would leak Zswap-level material. Since the amount equals the
-public `price` anyway, there is nothing to disclose about it.
+`deriveReceipt` is exported and pure, so an auditor verifies an opening with no proof and no
+reimplementation of the hash:
+
+```ts
+const opening = pureCircuits.deriveReceipt(secret, serviceId);
+const proven  = ledger(state.data).receipts.member(opening);
+```
 
 ### Solvency
 
@@ -352,7 +353,7 @@ A CLI wrapping two commands.
 coin. Run once per top-up. Losing the coin loses the deposit — there is no redeem path.
 
 `m402 call <url>` is the per-call loop: handle the 402, build and prove the payment, submit,
-retry with the nullifier, return the resource. It reports proof-generation and verification
+retry with the receipt secret, return the resource. It reports proof-generation and verification
 timings separately, since they differ by four orders of magnitude, and it labels deposit cost
 distinctly so a one-off top-up is not mistaken for per-call latency.
 
@@ -362,10 +363,11 @@ distinctly so a one-off top-up is not mistaken for per-call latency.
 |---|---|
 | Agent underpays | `assert` fails, transaction rejected, nothing spent |
 | Agent over-funds and stops | `redeem` returns the unspent credit as NIGHT |
-| Observer copies a nullifier from the chain | Useless — redemption needs the receipt secret, which is never published |
+| Observer copies a receipt hash from the chain | Useless — redemption needs the secret, which is never published |
+| Agent pays more than the price | Rejected — `coin.value == price`, so an overpaying coin cannot burn the difference |
+| Two payments submitted concurrently | One fails. Writes to a contract conflict contract-wide; see [roadmap](roadmap.md#known-limitations) |
 | Registration front-run | `serviceId` is derived from `owner`, so a substituted address yields a different id |
 | Agent pays with a foreign token | Colour assert fails — only vault-minted credits are accepted |
-| Nullifier replayed | Rejected on-chain — one payment cannot buy two calls |
 | `serviceId` re-registered | Rejected on-chain — registration is first-come and immutable |
 | Agent loses its credit coin | Unrecoverable — `redeem` needs the coin |
 | Deposit tx lacks the NIGHT input | `receiveUnshielded` fails at submit — nothing minted |

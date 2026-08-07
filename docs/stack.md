@@ -51,7 +51,7 @@ export type PaymentRequired = {
   serviceId: string; price: string; vaultAddress: string;
 };
 
-export const PAYMENT_HEADER = 'X-Payment';   // value: nullifier hex
+export const PAYMENT_HEADER = 'X-Payment';   // value: receipt SECRET hex, never a hash
 ```
 
 A second definition of `Service` is a merge conflict at hour 20, in the code path that

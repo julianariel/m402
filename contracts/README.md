@@ -11,7 +11,7 @@ Requires the Compact toolchain and a local proof server on `:6300`.
 Build:
 
 ```
-compact compile src/m402Vault.compact managed/m402Vault
+npm run compile   # compact compile src/m402Vault.compact src/managed/m402Vault
 ```
 
 `managed/` is generated and gitignored.
