@@ -158,12 +158,12 @@ sequenceDiagram
 
     M->>W: URL + price in USD
     W->>W: salt = 32 random bytes
-    W->>W: serviceId = deriveServiceId(owner, salt)
     W->>W: convert USD → STAR (fixed rate)
+    W->>W: serviceId = deriveServiceId(owner, salt, price)
     W->>L: request signature
     L->>M: approve
     L->>V: registerService(salt, price, owner)
-    V->>V: serviceId = hash(domain, owner, salt)
+    V->>V: serviceId = hash(domain, owner, salt, price)
     V->>V: assert not already registered
     W->>GW: store serviceId → URL
     W-->>M: m402 URL (confirming…)
@@ -174,6 +174,11 @@ sequenceDiagram
 merchant secret exists. Deriving `serviceId` from `owner` is what defeats front-running: an
 observer who copies this transaction and substitutes their own address produces a *different*
 id and cannot capture the merchant's.
+
+`price` is bound into the id for the same reason, so the conversion to STAR must happen
+**before** the id is derived. Every argument of a pending registration is public. While the
+id bound only the owner, an observer could copy the owner and salt, set `price` to 1, and win
+the race — leaving the merchant with a service permanently priced at 1.
 
 ## Withdrawal
 

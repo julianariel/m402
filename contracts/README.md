@@ -2,9 +2,27 @@
 
 `m402Vault.compact` — the payment vault.
 
-Five circuits: `registerService`, `deposit`, `pay`, `redeem`, `withdraw`, plus the pure
-`deriveServiceId`. See
+Five state circuits: `registerService`, `deposit`, `pay`, `redeem`, `withdraw`. See
 [`../docs/design.md`](../docs/design.md#3-contract--m402vaultcompact).
+
+Three **exported pure circuits** are the off-chain interface. They need no proof and no
+wallet, so the gateway, the web app and an auditor call them directly through
+`pureCircuits`. Never reimplement these hashes — a local copy that drifts produces an id or
+a receipt that the chain does not recognise:
+
+```
+creditColor(self: ContractAddress): Bytes<32>
+    The colour of this vault's credit. Pass the vault address. The agent needs it to build
+    a coin of the right colour before it calls pay.
+
+deriveReceipt(secret: Bytes<32>, serviceId: Bytes<32>): Bytes<32>
+    The redemption credential, and the selective-disclosure opening. The gateway hashes the
+    X-Payment secret with this and looks the result up in the `receipts` ledger Set.
+
+deriveServiceId(owner: Bytes<32>, salt: Bytes<32>, price: Uint<64>): Bytes<32>
+    The service id. `price` is part of the derivation, so a registration cannot be front-run
+    at a different price.
+```
 
 Requires the Compact toolchain and a local proof server on `:6300`.
 
@@ -14,7 +32,24 @@ Build:
 npm run compile   # compact compile src/m402Vault.compact src/managed/m402Vault
 ```
 
-`managed/` is generated and gitignored.
+`managed/` is generated, and **mostly** gitignored — but not entirely. Three files are
+deliberately tracked:
+
+```
+src/managed/m402Vault/contract/index.js       tracked
+src/managed/m402Vault/contract/index.d.ts     tracked
+src/managed/m402Vault/contract/index.js.map   tracked
+src/managed/m402Vault/keys/                   ignored (~23 MB of proving keys)
+src/managed/m402Vault/zkir/                   ignored
+```
+
+The tracked three are what `@m402/contracts/pure` re-exports (`src/pure.ts`), so the
+gateway, the web app and the agent get `pureCircuits` and `ledger` **without installing the
+Compact compiler**. Do not delete them to "clean generated output" — that breaks three
+workspaces, and the break shows up as a missing import rather than as a compile error.
+
+Recompiling rewrites them. Commit the result when the contract changes, or consumers keep
+deriving ids against the old circuit.
 
 ---
 

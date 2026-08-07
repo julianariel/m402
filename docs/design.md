@@ -27,6 +27,13 @@ proves possession of a valid credit coin and nothing else. No address appears in
 transaction, and two payments by the same agent cannot be linked to each other. This is the
 property x402 on a transparent chain cannot have, and it is the whole point.
 
+This is checked, not only argued. `puts no payer identity into a pay transaction` in
+`deploy.test.ts` captures a real `pay` transaction at `balanceTx` and asserts that no intent
+carries an unshielded offer or a DUST registration — either would bind the agent's public
+NIGHT address to the payment. Both are reachable without a code change: a fee shortfall can
+pull an unshielded UTXO into balancing, and a first-time DUST registration rides along.
+Neither is loud, so the test is what keeps the claim true.
+
 **Public — everything about the trade.** The service, its price, the merchant, the timing,
 and a `merchantBalance` increment of exactly `price`. Deposits and redemptions are public in
 both amount and address.
@@ -70,9 +77,12 @@ Diagrams for each step: [`architecture/payment-flow.md`](architecture/payment-fl
 
 ## 3. Contract — `m402Vault.compact`
 
-Five circuits: `registerService`, `deposit`, `pay`, `redeem`, `withdraw`, plus the pure
-`deriveServiceId`. All compile against compact 0.31.1; the confirmed stdlib API and the
-witness requirements are in [`../contracts/README.md`](../contracts/README.md).
+Five state circuits: `registerService`, `deposit`, `pay`, `redeem`, `withdraw`, plus three
+**exported pure circuits** — `creditColor`, `deriveReceipt` and `deriveServiceId` — which
+form the off-chain interface. They need no proof and no wallet, so the gateway, the web app
+and an auditor call them through `pureCircuits` rather than reimplementing the hashes. Their
+signatures are in [`../contracts/README.md`](../contracts/README.md), which also holds the
+confirmed stdlib API and the witness requirements. All compile against compact 0.31.1.
 
 ### Ledger state (public)
 
@@ -90,13 +100,19 @@ No coin appears in ledger state. A `QualifiedShieldedCoinInfo` in a ledger cell 
 ### `registerService(salt, price, owner)`
 
 ```compact
-export pure circuit deriveServiceId(owner: Bytes<32>, salt: Bytes<32>): Bytes<32> {
-  return persistentHash<Vector<3, Bytes<32>>>([pad(32, "m402:sid:v1"), owner, salt]);
+export pure circuit deriveServiceId(
+  owner: Bytes<32>,
+  salt: Bytes<32>,
+  price: Uint<64>
+): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>(
+    [pad(32, "m402:sid:v1"), owner, salt, price as Bytes<32>]
+  );
 }
 
 export circuit registerService(salt: Bytes<32>, price: Uint<64>, owner: Bytes<32>): [] {
   assert(price > 0, "price must be positive");
-  const serviceId = deriveServiceId(disclose(owner), disclose(salt));
+  const serviceId = deriveServiceId(disclose(owner), disclose(salt), disclose(price));
   assert(!servicePrice.member(serviceId), "already registered");
   assert(!serviceOwner.member(serviceId), "already registered");
   servicePrice.insert(serviceId, disclose(price));
@@ -104,14 +120,20 @@ export circuit registerService(salt: Bytes<32>, price: Uint<64>, owner: Bytes<32
 }
 ```
 
-**`serviceId` is derived from the owner, not chosen freely.** A free `serviceId` is
-front-runnable: an observer copies an in-flight registration, substitutes their own `owner`,
-wins the race, and — because registration is immutable — permanently collects that service's
-revenue. Deriving the id from `owner` means a substituted address produces a *different* id
-and cannot collide. Both maps are guarded, so neither can be replaced independently.
+**`serviceId` is derived from the owner and the price, not chosen freely.** A free
+`serviceId` is front-runnable: an observer copies an in-flight registration, substitutes
+their own `owner`, wins the race, and — because registration is immutable — permanently
+collects that service's revenue. Deriving the id from `owner` means a substituted address
+produces a *different* id and cannot collide. Both maps are guarded, so neither can be
+replaced independently.
+
+**`price` is bound for the same reason.** Every argument of a pending registration is public.
+While the id bound only the owner, a front-runner could copy the victim's `owner` and `salt`,
+set `price` to 1, and win the race — leaving the merchant with a service permanently priced
+at 1. Binding `price` into the id closes that path: a substituted price yields a different id.
 
 `deriveServiceId` is `pure`, so the gateway and web app compute the same id off-chain with no
-proof. `owner` is the merchant's unshielded Lace address, used directly as the payout
+proof. All three inputs are needed, `price` included. `owner` is the merchant's unshielded Lace address, used directly as the payout
 destination.
 
 ### `deposit(amount)`
