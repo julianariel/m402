@@ -1,0 +1,23 @@
+# Secrets — never commit. Wallet material lives outside the repo.
+.mnemonic
+.mnemonic.*
+.wallet-seed
+*.seed
+.env
+.env.*
+!.env.example
+
+# Dependencies / build
+node_modules/
+dist/
+build/
+.turbo/
+
+# Compact build artifacts
+managed/
+*.zkir
+
+# OS / editor
+.DS_Store
+.idea/
+*.swp
