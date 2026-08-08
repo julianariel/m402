@@ -3,6 +3,7 @@ import { Badge, Button, Card, IconButton, StatusDot } from '../components/core';
 import { Dialog, Toast, Tooltip } from '../components/feedback';
 import { CodeBlock, FlowStep, HashChip, PriceTag } from '../components/protocol';
 import { SERVICES, type Service } from './data';
+import { useNarrow } from '../lib/useNarrow';
 
 /**
  * Illustrative — the real `receipts` set is on-chain but decoding it into this shape
@@ -26,6 +27,7 @@ export interface ServiceScreenProps {
 type PayStep = 0 | 1 | 2 | 3; // idle · proving · watching · done
 
 export function ServiceScreen({ slug, onBack }: ServiceScreenProps) {
+  const narrow = useNarrow();
   const s: Service = SERVICES.find((x) => x.slug === slug) ?? SERVICES[0];
   const [step, setStep] = useState<PayStep>(0);
   const [open, setOpen] = useState(false);
@@ -47,7 +49,7 @@ export function ServiceScreen({ slug, onBack }: ServiceScreenProps) {
         ← All services
       </button>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1.15fr .85fr', gap: 'var(--space-7)', alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: narrow ? 'minmax(0,1fr)' : '1.15fr .85fr', gap: 'var(--space-7)', alignItems: 'start' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 'var(--space-3)' }}>

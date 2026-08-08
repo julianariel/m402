@@ -44,7 +44,11 @@ export function WaveField() {
 
     function resize() {
       dpr = Math.min(devicePixelRatio || 1, 2);
-      w = innerWidth; h = innerHeight;
+      // clientWidth/clientHeight reflect the actual layout viewport; innerWidth/innerHeight
+      // can disagree with it under some mobile emulation, which then feeds back into this
+      // canvas's own `width:100%` CSS box and causes real horizontal overflow.
+      w = document.documentElement.clientWidth;
+      h = document.documentElement.clientHeight;
       cvs!.width = Math.round(w * dpr);
       cvs!.height = Math.round(h * dpr);
       ctx!.setTransform(dpr, 0, 0, dpr, 0, 0);

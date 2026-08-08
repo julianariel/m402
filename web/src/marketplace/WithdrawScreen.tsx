@@ -5,6 +5,7 @@ import { EmptyState } from '../components/feedback';
 import { DataTable, StatBlock, type DataColumn } from '../components/data';
 import { HashChip, PriceTag } from '../components/protocol';
 import { useWalletContext } from '../wallet/WalletContext';
+import { useNarrow } from '../lib/useNarrow';
 
 interface AccrualRow {
   id: number;
@@ -34,6 +35,7 @@ const columns: DataColumn<AccrualRow>[] = [
 const pageStyle = { maxWidth: 'var(--container-lg)', margin: '0 auto', padding: '40px var(--page-pad) 80px' } as const;
 
 export function WithdrawScreen() {
+  const narrow = useNarrow();
   const { connected, connecting, address, error: walletError, api, connect } = useWalletContext();
   const [amount, setAmount] = useState(String(CLAIMABLE_TOTAL));
   const [withdrawing, setWithdrawing] = useState(false);
@@ -98,10 +100,10 @@ export function WithdrawScreen() {
         <HashChip label="connected" value={address ?? ''} tone="public" head={12} tail={6} />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 'var(--space-6)', alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: narrow ? 'minmax(0,1fr)' : '1fr 340px', gap: 'var(--space-6)', alignItems: 'start' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
           <Card padding="lg">
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 'var(--space-7)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: narrow ? 'minmax(0,1fr)' : 'repeat(3,1fr)', gap: 'var(--space-7)' }}>
               <StatBlock label="Claimable" value={CLAIMABLE_TOTAL.toLocaleString()} unit="STAR" tone="accent" delta="public — merchantBalance" />
               <StatBlock label="Calls settled" value={CALLS_TOTAL.toLocaleString()} delta="volume is observable" />
               <StatBlock label="Payers known" value="0" tone="private" delta="none, by construction" />

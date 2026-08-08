@@ -4,6 +4,7 @@ import { Badge, Button, Card, Icon, TopNav } from './components';
 import { FlowStep, CodeBlock } from './components/protocol';
 import { WalletConnect } from './wallet/WalletConnect';
 import { REPO_URL, openRepo } from './lib/links';
+import { useNarrow } from './lib/useNarrow';
 import { useRoute } from './router';
 import { MarketplaceShell } from './marketplace/MarketplaceShell';
 import { ExplorerScreen } from './marketplace/ExplorerScreen';
@@ -91,6 +92,7 @@ const olBody: CSSProperties = { margin: 0, paddingLeft: '1.3em', display: 'flex'
 const HOME_ANCHORS = new Set(['what', 'compare', 'how', 'ledger', 'roadmap']);
 
 function HomeScreen({ navigate }: { navigate: (path: string) => void }) {
+  const narrow = useNarrow();
   return (
     <div style={{ position: 'relative' }}>
       <WaveField />
@@ -162,7 +164,7 @@ function HomeScreen({ navigate }: { navigate: (path: string) => void }) {
           }}>
             An agent proves it is paying <span style={{ color: 'var(--state-public)' }}>at least the asking price</span> — without revealing <span style={{ color: 'var(--state-private)' }}>how much</span>, or <span style={{ color: 'var(--state-private)' }}>who it is</span>.
           </p>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--space-7)', marginTop: 'var(--space-10)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: narrow ? 'minmax(0,1fr)' : 'repeat(3, 1fr)', gap: 'var(--space-7)', marginTop: 'var(--space-10)' }}>
             <div style={{ paddingTop: 'var(--space-5)', borderTop: '2px solid var(--blue-800)' }}>
               <Badge tone="neutral">Problem</Badge>
               <h3 style={{ margin: 'var(--space-4) 0 0', font: 'var(--fw-semibold) var(--fs-h4)/1.3 var(--font-display)', color: 'var(--text-primary)' }}>Public chains leak strategy</h3>
@@ -184,7 +186,7 @@ function HomeScreen({ navigate }: { navigate: (path: string) => void }) {
         {/* 02 — x402 vs m402 */}
         <Section id="compare">
           <SectionHead n="02" tag="x402 vs m402" title="Same protocol, different ledger" />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-card)', overflow: 'hidden' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: narrow ? 'minmax(0,1fr)' : '1fr 1fr', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-card)', overflow: 'hidden' }}>
             <div style={{ padding: 'var(--space-8) var(--space-7)' }}>
               <Badge tone="neutral">x402</Badge>
               <h3 style={{ margin: 'var(--space-6) 0 0', font: 'var(--fw-semibold) var(--fs-h4)/1.3 var(--font-display)', color: 'var(--text-primary)' }}>Everything settles in public</h3>
@@ -196,7 +198,7 @@ function HomeScreen({ navigate }: { navigate: (path: string) => void }) {
                 <DisclosureRow icon="eye">Remaining balance</DisclosureRow>
               </ul>
             </div>
-            <div style={{ padding: 'var(--space-8) var(--space-7)', background: 'var(--bg-surface)', borderLeft: '1px solid var(--border-subtle)' }}>
+            <div style={{ padding: 'var(--space-8) var(--space-7)', background: 'var(--bg-surface)', borderLeft: narrow ? undefined : '1px solid var(--border-subtle)', borderTop: narrow ? '1px solid var(--border-subtle)' : undefined }}>
               <Badge tone="private" icon="shield-check">m402</Badge>
               <h3 style={{ margin: 'var(--space-6) 0 0', font: 'var(--fw-semibold) var(--fs-h4)/1.3 var(--font-display)', color: 'var(--text-primary)' }}>Only the fact of payment</h3>
               <ul style={{ margin: 'var(--space-5) 0 0', padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -219,11 +221,11 @@ function HomeScreen({ navigate }: { navigate: (path: string) => void }) {
         {/* 03 — How it works */}
         <Section id="how">
           <SectionHead n="03" tag="how it works" title="Four steps" />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-11)', alignItems: 'start' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: narrow ? 'minmax(0,1fr)' : '1fr 1fr', gap: narrow ? 'var(--space-8)' : 'var(--space-11)', alignItems: 'start' }}>
             <div>
               <FlowStep index={1} title="GET the wrapped URL" detail="Gateway answers 402 with serviceId, price, vault." privacy="public" />
               <FlowStep index={2} title="Prove pay() locally" detail="~19s. coin.value never leaves the machine." privacy="private" />
-              <FlowStep index={3} title="Retry with the nullifier" detail="Gateway verifies against the indexer in ~3.4ms." privacy="public" />
+              <FlowStep index={3} title="Retry with the receipt" detail="Gateway verifies against the indexer in ~3.4ms." privacy="public" />
               <FlowStep index={4} title="Resource returned" detail="Origin API, or an x402 service relayed on Base." last />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
@@ -241,13 +243,13 @@ function HomeScreen({ navigate }: { navigate: (path: string) => void }) {
         {/* 04 — On-chain */}
         <Section id="ledger">
           <SectionHead n="04" tag="on-chain" title="What the chain records" />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-7)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: narrow ? 'minmax(0,1fr)' : '1fr 1fr', gap: 'var(--space-7)' }}>
             <div>
               <Badge tone="public" icon="eye" style={{ marginBottom: 'var(--space-5)' }}>Public</Badge>
               <div>
                 <RecordRow><code style={codeMono}>servicePrice</code></RecordRow>
                 <RecordRow><code style={codeMono}>serviceOwner</code></RecordRow>
-                <RecordRow><code style={codeMono}>nullifiers</code> — that a payment happened, once</RecordRow>
+                <RecordRow><code style={codeMono}>receipts</code> — that a payment happened, once</RecordRow>
                 <RecordRow><code style={codeMono}>merchantBalance</code></RecordRow>
                 <RecordRow>deposits &amp; withdrawals</RecordRow>
               </div>
@@ -264,7 +266,7 @@ function HomeScreen({ navigate }: { navigate: (path: string) => void }) {
             </div>
           </div>
           <p style={{ margin: 'var(--space-7) 0 0', maxWidth: '62ch', font: 'var(--fw-regular) var(--fs-body-sm)/1.6 var(--font-body)', color: 'var(--text-muted)' }}>
-            The nullifier commits to the payment, so one payment can be disclosed to an auditor off-chain — that amount and nothing else.
+            The receipt commits to the payment, so one payment can be disclosed to an auditor off-chain — that amount and nothing else.
             <a href="#limitations" style={{ marginLeft: 6 }}>Known limitations, in full, below.</a>
           </p>
         </Section>

@@ -7,6 +7,7 @@ import { DataTable, StatBlock, type DataColumn } from '../components/data';
 import { PriceTag } from '../components/protocol';
 import { SERVICES, type Service } from './data';
 import { VaultStatus } from './VaultStatus';
+import { useNarrow } from '../lib/useNarrow';
 
 export interface ExplorerScreenProps {
   onOpenService: (slug: string) => void;
@@ -16,6 +17,7 @@ export interface ExplorerScreenProps {
 const TYPE_LABEL: Record<Service['type'], string> = { origin: 'origin', relay: 'relay' };
 
 export function ExplorerScreen({ onOpenService, onPublish }: ExplorerScreenProps) {
+  const narrow = useNarrow();
   const [tab, setTab] = useState('all');
   const [q, setQ] = useState('');
   const rows = SERVICES.filter((s) => (tab === 'all' || s.type === tab) && (s.name + s.slug).toLowerCase().includes(q.toLowerCase()));
@@ -66,7 +68,7 @@ export function ExplorerScreen({ onOpenService, onPublish }: ExplorerScreenProps
       <VaultStatus />
 
       <Card padding="lg" style={{ marginBottom: 'var(--space-8)' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 'var(--space-7)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: narrow ? 'repeat(2, minmax(0,1fr))' : 'repeat(4,1fr)', gap: 'var(--space-7)' }}>
           <StatBlock label="Pooled reserve" value="48,200" unit="STAR" delta="public — moves only on deposit" />
           <StatBlock label="Calls settled" value="10,673" tone="accent" delta="volume public, payers not" />
           <StatBlock label="Amounts revealed" value="0" tone="private" delta="by construction" />
