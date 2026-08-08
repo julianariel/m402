@@ -27,6 +27,22 @@ POST /services   register a service in the gateway's own off-chain registry
 GET /services     lists registered services, price serialized as a string
 ```
 
+Anything the caller appends after `/s/:id` — path suffix, query string, or both — is
+forwarded to the upstream, for **origin and relay alike** (`buildUpstreamUrl`). A service is
+therefore registered at its bare URL and parameterised per call:
+
+```
+registered target   https://api.example/weather
+agent calls         GET /s/<id>?location=Tokyo
+gateway fetches     https://api.example/weather?location=Tokyo
+```
+
+Query params present in the registered target act as defaults; the caller's win on a key
+collision. The constructed URL is asserted to stay on the target's origin and under its path,
+so a suffix can never redirect the relayer's wallet at another host. On the relay path a
+query param can change what the external service quotes — `RELAYER_MAX_PAYMENT` is what
+bounds that.
+
 `X-Payment` carries the payer's **receipt secret**, never a hash — see
 [`@m402/shared`](../shared/src/index.ts) and
 [`design.md`](../docs/design.md#2-request-flow). The contract has no nullifier; `receipts` is
@@ -47,7 +63,7 @@ file that touches Hono.
 | `verify.ts` | Watches the vault's on-chain state for a receipt; `createPublicDataSubscribe` wraps the Midnight SDK's `PublicDataProvider` |
 | `consumed.ts` | SQLite-backed local replay guard — one receipt redeems once |
 | `ownership.ts` | Confirms `serviceOwner[id]` on-chain matches a `POST /services` claim, before it's trusted |
-| `dispatch.ts` | Origin HTTP proxy + EVM relay (x402 client, CAIP-2 chain selection) |
+| `dispatch.ts` | Origin HTTP proxy + EVM relay (x402 client, CAIP-2 chain selection); `buildUpstreamUrl` is shared by both |
 | `health.ts` | TTL-cached origin health probe, run before a 402 |
 | `index.ts` | Wires real implementations together, starts the server |
 

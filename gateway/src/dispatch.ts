@@ -36,12 +36,36 @@ function proxyResponse(upstream: Response): Response {
   return new Response(upstream.body, { status: upstream.status, headers });
 }
 
-export async function dispatchOrigin(service: Service, req: Request, timeoutMs = 10_000): Promise<Response> {
-  const incoming = new URL(req.url);
+// Both fulfilment paths build their upstream URL here. Keeping it in one place is the
+// point: when only the origin path forwarded the path suffix and query, a relay service
+// could not take a parameter at all, and the two dispatchers disagreed silently.
+export function buildUpstreamUrl(target: string, requestUrl: string): URL {
+  const incoming = new URL(requestUrl);
   const suffix = incoming.pathname.replace(/^\/s\/[^/]+/, '');
-  const target = new URL(service.target);
-  target.pathname = target.pathname.replace(/\/$/, '') + suffix;
-  target.search = incoming.search;
+  const upstream = new URL(target);
+  upstream.pathname = upstream.pathname.replace(/\/$/, '') + suffix;
+
+  // Query params registered with the target are defaults; the caller's win on a collision.
+  // A relay target registered as ...?location=Buenos%20Aires therefore keeps working when
+  // the agent sends nothing, and the agent can still ask for a different location.
+  const merged = new URLSearchParams(upstream.search);
+  for (const [key, value] of incoming.searchParams) merged.set(key, value);
+  upstream.search = merged.toString();
+
+  // Assigning to .pathname cannot change the host, and the WHATWG parser resolves `..`
+  // before this function is reached, so neither escape is reachable today. Asserted
+  // anyway: this is the boundary between an agent-supplied string and a wallet that pays.
+  const base = new URL(target);
+  const basePath = base.pathname.replace(/\/$/, '');
+  if (upstream.origin !== base.origin || !upstream.pathname.startsWith(basePath)) {
+    throw new Error(`upstream URL ${upstream.href} escaped the registered target ${target}`);
+  }
+
+  return upstream;
+}
+
+export async function dispatchOrigin(service: Service, req: Request, timeoutMs = 10_000): Promise<Response> {
+  const target = buildUpstreamUrl(service.target, req.url);
 
   const headers = headersForUpstream(req);
 

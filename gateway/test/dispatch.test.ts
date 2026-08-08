@@ -86,6 +86,63 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
 
+// One builder serves both dispatchers. Before it existed only the origin path forwarded
+// the suffix and query, so a relay service could not accept a parameter at all.
+describe('buildUpstreamUrl', () => {
+  const build = async (target: string, path: string) => {
+    const { buildUpstreamUrl } = await import('../src/dispatch.js');
+    return buildUpstreamUrl(target, `http://gw.local${path}`).href;
+  };
+
+  it('appends the path suffix after /s/:id', async () => {
+    expect(await build('http://origin.test/api/v1', '/s/abc/weather')).toBe('http://origin.test/api/v1/weather');
+  });
+
+  it('forwards the caller query string', async () => {
+    expect(await build('http://origin.test/api', '/s/abc/x?a=1&b=2')).toBe('http://origin.test/api/x?a=1&b=2');
+  });
+
+  it('keeps query params baked into the registered target when the caller sends none', async () => {
+    expect(await build('http://origin.test/weather?location=Buenos%20Aires', '/s/abc')).toBe(
+      'http://origin.test/weather?location=Buenos+Aires',
+    );
+  });
+
+  it('lets the caller override a registered default', async () => {
+    expect(await build('http://origin.test/weather?location=Buenos%20Aires', '/s/abc?location=Tokyo')).toBe(
+      'http://origin.test/weather?location=Tokyo',
+    );
+  });
+
+  it('keeps a registered default the caller did not mention', async () => {
+    const href = await build('http://origin.test/w?units=metric&location=BA', '/s/abc?location=Tokyo');
+    expect(href).toContain('units=metric');
+    expect(href).toContain('location=Tokyo');
+  });
+
+  // Assigning to .pathname cannot change the host — a suffix that looks protocol-relative
+  // stays a path segment. This is the property the relayer's funds depend on.
+  it('cannot be redirected to another host by the path suffix', async () => {
+    expect(await build('http://origin.test/api', '/s/abc//evil.example/x')).toBe(
+      'http://origin.test/api//evil.example/x',
+    );
+  });
+
+  // The WHATWG parser resolves `..` when the Request is constructed, long before this
+  // function runs, so a traversal attempt cannot leave the registered path. The containment
+  // assert in buildUpstreamUrl is therefore an unreachable invariant guard, not this test's
+  // subject — what matters is that the result stays under the target either way.
+  it('neutralises a path traversal attempt', async () => {
+    // `/s/abc/../../../etc` normalises to `/etc`, which no longer matches the /s/:id
+    // prefix, so the whole thing lands under the target as a plain segment.
+    expect(await build('http://origin.test/api/v1', '/s/abc/../../../etc')).toBe('http://origin.test/api/v1/etc');
+    // `/s/abc/%2e%2e/secret` normalises to `/s/secret`, which the prefix consumes whole —
+    // the traversal becomes the service id and leaves no suffix at all. In the running
+    // gateway that id resolves to nothing and the request 404s before dispatch.
+    expect(await build('http://origin.test/api/v1', '/s/abc/%2e%2e/secret')).toBe('http://origin.test/api/v1');
+  });
+});
+
 describe('chainFromCaip2', () => {
   it('maps eip155:8453 to base', async () => {
     const { chainFromCaip2 } = await import('../src/dispatch.js');
