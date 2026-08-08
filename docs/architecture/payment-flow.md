@@ -122,6 +122,11 @@ the indexer cannot lift a redemption credential off the chain.
 The amount is `==`, not `>=`. `pay` consumes the whole coin but credits only `price`, so an
 overpaying coin would burn the difference.
 
+The gateway checks one more thing the diagram omits: before dispatching, it also checks the
+hash against a **local** consumed-receipts table. `receipts` is append-only — it proves a
+payment happened, never that this particular access grant is still unspent — so that second
+check is the gateway's own replay guard, not something the chain can enforce for it.
+
 ## Payment — relayed x402 service
 
 Identical up to verification. Only fulfilment differs.
@@ -165,9 +170,17 @@ sequenceDiagram
     L->>V: registerService(salt, price, owner)
     V->>V: serviceId = hash(domain, owner, salt, price)
     V->>V: assert not already registered
-    W->>GW: store serviceId → URL
-    W-->>M: m402 URL (confirming…)
-    Note over W,V: flips to "live" once the indexer sees it
+    W->>GW: POST /services { id, price, owner, target }
+    GW->>V: queryContractState — read serviceOwner[id]
+    alt not yet visible on-chain
+      GW-->>W: 503 registration-not-yet-confirmed — retry
+    else owner mismatch
+      GW-->>W: 403 owner-mismatch
+    else confirmed match
+      GW->>GW: store serviceId → URL
+      GW-->>W: 201
+    end
+    W-->>M: m402 URL
 ```
 
 `owner` is the merchant's unshielded Lace address — it is the payout destination, so no
@@ -179,6 +192,12 @@ id and cannot capture the merchant's.
 **before** the id is derived. Every argument of a pending registration is public. While the
 id bound only the owner, an observer could copy the owner and salt, set `price` to 1, and win
 the race — leaving the merchant with a service permanently priced at 1.
+
+The gateway's registry entry is not optimistic. `POST /services` is a separate, off-chain call
+— the contract never stores a URL — and the gateway does not take its body on faith: it reads
+`serviceOwner[id]` back from the chain first and only stores the mapping once that matches.
+There is no unconfirmed "confirming…" state to badge; the web UI retries the `503` until the
+`registerService` transaction has actually landed.
 
 ## Withdrawal
 

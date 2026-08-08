@@ -70,7 +70,7 @@ src/managed/m402Vault/keys/                   ignored (~23 MB of proving keys)
 src/managed/m402Vault/zkir/                   ignored
 ```
 
-The tracked three are what `@m402/contracts/pure` re-exports (`src/pure.ts`), so the
+The tracked three are what `contracts/pure` re-exports (`src/pure.ts`), so the
 gateway, the web app and the agent get `pureCircuits` and `ledger` **without installing the
 Compact compiler**. Do not delete them to "clean generated output" — that breaks three
 workspaces, and the break shows up as a missing import rather than as a compile error.

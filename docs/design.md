@@ -65,13 +65,17 @@ Step 0 is a one-time top-up, not part of the per-call path — it costs a proof,
 amortised over every call the deposit funds. Steps 1–7 are the per-call loop.
 
 The agent submits its own transaction. The gateway only reads the chain: it holds no funds,
-signs nothing, and cannot fabricate a payment. Step 5 is a GraphQL-WS subscription against
-the indexer.
+signs nothing, and cannot fabricate a payment. Step 5 subscribes to the vault's contract state
+through the Midnight SDK's `PublicDataProvider` (`contractStateObservable`) and checks
+`ledger(state.data).receipts.member(...)` on every emission — a typed SDK entry point, not a
+hand-rolled GraphQL query against a guessed schema.
 
 **Step 4 sends the receipt *secret*, never anything read off the chain.** Only
 `deriveReceipt(secret, serviceId)` is published, so possession of the secret is what proves
 the purchase. The gateway must also record consumed secrets locally — the on-chain set proves
-a payment happened, never that it is still unspent.
+a payment happened, never that it is still unspent. It also checks the secret's hash against
+every *other* registered service's derived receipt, so a secret that paid for the wrong
+service is reported as such rather than degrading into an indistinguishable timeout.
 
 Diagrams for each step: [`architecture/payment-flow.md`](architecture/payment-flow.md).
 
@@ -318,14 +322,29 @@ USDC.
 ## 5. Gateway
 
 ```
-1. resolve serviceId from /s/:id
-2. no X-Payment?  → 402 { serviceId, price, vaultAddress }
-3. X-Payment?     → hash the secret, check the on-chain receipts set,
-                    then check it against the locally-consumed set
+1. resolve serviceId from /s/:id — unknown → 404
+2. no X-Payment?  → origin service: health-check first, unreachable → 503
+                  → 402 { serviceId, price, vaultAddress }
+3. X-Payment?     → hash the secret via deriveReceipt(secret, serviceId),
+                    check the on-chain receipts set, then the locally-consumed set
+                    → confirmed     → continue to 4
+                    → replayed      → 402 { reason: 'receipt-already-used' }
+                    → wrong-service → 402 (payment body — secret paid a different service)
+                    → timeout       → 503 { reason: 'payment-pending' }, Retry-After
 4. dispatch on service.type:
      "origin" → HTTP proxy to merchant's URL
      "relay"  → x402 client → pay USDC → fetch
 5. return the response body verbatim
+```
+
+`POST /services` registers a service in the gateway's own registry — a plain HTTP write, not
+something synced automatically from the chain. Before accepting one, the gateway reads
+`serviceOwner[id]` from the chain and compares it to the claimed `owner`:
+
+```
+not yet visible on-chain → 503 { reason: 'registration-not-yet-confirmed' }  (retryable)
+owner mismatch           → 403 { reason: 'owner-mismatch' }                  (not retryable)
+match                    → inserted
 ```
 
 Registry row, covering both paths:
@@ -354,15 +373,21 @@ address bytes, which `sendUnshielded` takes directly as a `UserAddress`. There i
 secret and nothing to save: `withdraw` pays the address recorded at registration, so identity
 never has to be proven.
 
-`serviceId` is 32 random bytes generated in the publish form. On-chain it is only a key; the
-URL lives in the gateway's registry. Registration is first-come and immutable — `Map.insert`
+`serviceId` is derived (`deriveServiceId(owner, salt, price)`, §3), not chosen freely — `salt`
+is the 32 random bytes generated in the publish form. On-chain the id is only a key; the URL
+lives in the gateway's registry. Registration is first-come and immutable — `Map.insert`
 overwrites, so without that guard anyone could re-register a `serviceId` with themselves as
 owner and redirect the merchant's revenue.
 
 A dev CLI registers services directly from a headless wallet, for testing and automation.
 
-`registerService` costs a proof. Registration UI is optimistic: return the URL immediately,
-badge it `confirming…`, flip to `live` when the indexer sees it.
+`registerService` costs a proof, and `POST /services` to the gateway's own registry is a
+**separate** call the web UI makes after it — the contract never stores the URL. The gateway
+does not accept that call on faith: it reads `serviceOwner[id]` from the chain and rejects
+with `503` if the registration isn't visible yet (retry once it lands), or `403` if the
+claimed owner doesn't match what's on-chain. This replaces an earlier "optimistic, confirming
+→ live" UI plan — the gateway registry entry only exists once the chain has already confirmed
+it, so there is no unconfirmed intermediate state to badge.
 
 The explorer lists native and relayed services together, with relayed entries badged by
 chain. Public: service name, price, call volume. Hidden: every payer and every amount.

@@ -206,3 +206,14 @@ Current, deliberate, and documented:
   password. Delete the store and the paid-for call cannot be claimed. Accepted for the
   hackathon; a real deployment needs the secret persisted before the transaction is
   submitted, not after, and backed up.
+- **Registration is not optimistic.** `POST /services` to the gateway's registry checks
+  `serviceOwner[id]` on-chain before accepting the write, and rejects with a retryable `503`
+  until the `registerService` transaction is visible. This closes the gap where a client could
+  claim ownership the chain never granted, but it means the merchant UI cannot show the
+  service URL immediately — it has to poll/retry through the confirmation window (same order
+  of magnitude as a proof: ~20-30s) rather than badging an unconfirmed state as "live" early.
+- **A secret paid for the wrong service degrades to a timeout, sometimes.** The gateway
+  detects this case (`wrong-service`) only against services it already knows about at the
+  moment `verify()` starts — a service registered *during* the wait window won't be in that
+  precomputed candidate set, so a secret paid against it would still time out rather than
+  return the more specific result.

@@ -64,11 +64,20 @@ merchant-side middleware ever happens.
 
 **Registry: SQLite via `better-sqlite3`**, one file on disk. `serviceId → URL` cannot live
 on-chain, so the gateway owns it — and an in-memory map means a restart erases every service
-already demoed with. Ten minutes of work against losing the demo.
+already demoed with. Ten minutes of work against losing the demo. The same file also holds the
+consumed-receipts replay guard (`gateway/src/consumed.ts`) — a receipt secret redeems once,
+and the on-chain `receipts` set alone can't enforce that, since it only proves a payment
+happened, not that this particular access grant is still unspent.
 
-**The gateway must be a long-lived process.** It holds a GraphQL-WS subscription to the
-indexer, so serverless is the wrong shape. This is also why the registry does not need a
-hosted database: one process, one file, ~10 rows.
+**The gateway must be a long-lived process.** It holds a live subscription to the vault's
+contract state (the Midnight SDK's `PublicDataProvider.contractStateObservable`, not a
+hand-rolled GraphQL-WS query), so serverless is the wrong shape. This is also why the registry
+does not need a hosted database: one process, one file, ~10 rows.
+
+**`POST /services` checks the chain before trusting a registration.** It reads
+`serviceOwner[id]` via `queryContractState` and compares it to the claimed owner —
+`pureCircuits`/`ledger`, re-exported from `contracts/pure`, not a reimplemented hash. This is
+also why `contracts` is a gateway dependency, not just a `shared`-style types package.
 
 ## Web
 
