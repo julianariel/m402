@@ -30,14 +30,14 @@ Tooling decisions, so four directories built in parallel stay compatible.
 shared/      types imported by every other package — see below
 contracts/   m402Vault.compact + deploy and measurement scripts
 gateway/     Hono service: 402, receipt watch, origin + relay dispatch
-agent/       CLI: deposit, call, redeem
+agent/       CLI: init, deposit, call, redeem
 web/         Vite + React + Tailwind: publish form, explorer, withdrawal
 ```
 
 ## `shared/` is not optional
 
-The registry row, the 402 body, and the payment header are consumed by six issues across
-three people. They live in `shared/` and are imported, never re-declared:
+The registry row, the 402 body, and the payment header cross every package boundary. They
+live in `shared/` and are imported, never re-declared:
 
 ```ts
 export type Service = {
@@ -54,8 +54,8 @@ export type PaymentRequired = {
 export const PAYMENT_HEADER = 'X-Payment';   // value: receipt SECRET hex, never a hash
 ```
 
-A second definition of `Service` is a merge conflict at hour 20, in the code path that
-carries the money.
+A second definition of `Service` is a silent divergence in the code path that carries the
+money.
 
 ## Gateway
 
@@ -63,8 +63,8 @@ carries the money.
 merchant-side middleware ever happens.
 
 **Registry: SQLite via `better-sqlite3`**, one file on disk. `serviceId → URL` cannot live
-on-chain, so the gateway owns it — and an in-memory map means a restart erases every service
-already demoed with. Ten minutes of work against losing the demo. The same file also holds the
+on-chain, so the gateway owns it, and an in-memory map would erase every registered service on
+restart. The same file also holds the
 consumed-receipts replay guard (`gateway/src/consumed.ts`) — a receipt secret redeems once,
 and the on-chain `receipts` set alone can't enforce that, since it only proves a payment
 happened, not that this particular access grant is still unspent.
@@ -94,15 +94,18 @@ because that is where the x402 ecosystem is; nothing is Base-specific.
 
 ## Deployment
 
-Local first. The gateway and proof server run on the demo machine, and the agent CLI runs
-beside them — that path needs no hosting at all.
+Local first. The gateway and proof server run on one machine, and the agent CLI runs beside
+them — that path needs no hosting at all.
 
-For a URL a judge can open, expose the gateway with a `cloudflared` tunnel and put `web/` on
-Vercel as a static build. If time allows near the end, move the gateway to a container host
-that supports long-lived processes rather than a tunnel from a laptop.
+For a public URL, `web/` is a static Vercel build and the gateway is exposed through a
+`cloudflared` tunnel. Two constraints follow from that split. Vite bakes `VITE_*` at build
+time, so changing the tunnel URL requires a redeploy, not just an environment edit. And the
+browser reaches the proof server at `127.0.0.1:6300` — allowed from an HTTPS page because
+loopback counts as a secure context — so the machine running the proof server is the machine
+driving the demo. A container host with long-lived process support removes both.
 
 No hosted Postgres. Supabase or Neon would add an account, a network hop, and a second source
-of truth for ten rows that SQLite already holds.
+of truth for a handful of rows that SQLite already holds.
 
 ## Security
 

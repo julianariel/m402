@@ -33,11 +33,16 @@ for one invocation with `--vault`.
 The workspace exposes the executable as `m402`:
 
 ```bash
+m402 init
 m402 deposit 5000
 m402 call http://127.0.0.1:8787/s/<service-id>
 m402 call http://127.0.0.1:8787/s/<service-id> --dry-run
 m402 redeem 1000 --yes
 ```
+
+`init` submits nothing. It syncs the wallet and reports the NIGHT, the credit coins and the
+registered services it can see, so the one-off multi-minute sync happens when you choose
+rather than inside your first payment. Run it first.
 
 `deposit` and `redeem` require the configured vault. `call` reads the vault from the
 gateway's HTTP 402 response and refuses a mismatch with `M402_VAULT_ADDRESS` unless

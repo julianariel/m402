@@ -85,6 +85,7 @@ until the resource actually arrives. The CLI does that, so `m402 call <url>` tak
 `curl` would — it is a `curl` that knows how to pay:
 
 ```bash
+m402 init                            # sync the wallet, report holdings; submits nothing
 m402 deposit 5000                    # once: NIGHT -> shielded credit
 m402 call https://gw.example/s/<id>  # per request, resource on stdout
 m402 redeem 4500 --yes               # unspent credit -> NIGHT
@@ -104,7 +105,7 @@ Full integration notes, exit-code table and recovery semantics:
 | `shared/` | Types imported by every package — registry row, 402 body, payment header |
 | `contracts/` | `m402Vault.compact` — `registerService`, `deposit`, `pay`, `redeem`, `withdraw` |
 | `gateway/` | Hono proxy, origin + relay adapters, indexer watcher |
-| `agent/` | Agent CLI — `deposit` and `call` |
+| `agent/` | Agent CLI — `init`, `deposit`, `call`, `redeem` |
 | `web/` | Marketplace and explorer |
 | `docs/` | Design, platform constraints, stack, roadmap, diagrams |
 

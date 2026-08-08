@@ -205,11 +205,11 @@ token colours are collision-resistant, so only this vault can mint that colour.
 gateway. Publishing the credential itself would let anyone watching the indexer claim the
 resource before the honest agent retried, and replay it forever.
 
-**There is no nullifier.** An earlier version kept one as a replay guard. Zswap already
-prevents spending the same coin twice, so it guarded nothing, cost a set write in the
-hottest circuit, grew without bound, and could reject an honest payment on a nonce
-collision. Its only secret input was a coin nonce, which is public for a deposit-minted
-coin — a future `creditCoin` that reused such a coin would have made every payment
+**There is no nullifier.** Zswap already prevents spending the same coin twice, so a
+contract-level nullifier would guard nothing while costing a set write in the hottest
+circuit, growing without bound, and risking rejection of an honest payment on a nonce
+collision. The only secret it could key on is a coin nonce, which is public for a
+deposit-minted coin — so a `creditCoin` that reused one would make every payment
 recomputable from public data, silently.
 
 **`creditCoin` is parameterised.** `pay` consumes the whole coin, so the wallet must supply
@@ -387,24 +387,31 @@ A dev CLI registers services directly from a headless wallet, for testing and au
 **separate** call the web UI makes after it — the contract never stores the URL. The gateway
 does not accept that call on faith: it reads `serviceOwner[id]` from the chain and rejects
 with `503` if the registration isn't visible yet (retry once it lands), or `403` if the
-claimed owner doesn't match what's on-chain. This replaces an earlier "optimistic, confirming
-→ live" UI plan — the gateway registry entry only exists once the chain has already confirmed
-it, so there is no unconfirmed intermediate state to badge.
+claimed owner doesn't match what's on-chain. A gateway registry entry therefore only exists
+once the chain has already confirmed it, so there is no unconfirmed state for the UI to badge.
 
 The explorer lists native and relayed services together, with relayed entries badged by
 chain. Public: service name, price, call volume. Hidden: every payer and every amount.
 
 ## 7. Agent
 
-A CLI wrapping two commands.
+A CLI wrapping four commands: `init`, `deposit`, `call`, `redeem`.
+
+`m402 init` syncs the wallet and reports what it holds. It submits nothing. Running it first
+moves the one-off multi-minute sync out of the first payment.
 
 `m402 deposit <amount>` converts NIGHT into shielded credits and persists the returned credit
-coin. Run once per top-up. Losing the coin loses the deposit — there is no redeem path.
+coin. Run once per top-up; one deposit funds many calls, because the wallet splits a larger
+coin and keeps the change.
 
 `m402 call <url>` is the per-call loop: handle the 402, build and prove the payment, submit,
 retry with the receipt secret, return the resource. It reports proof-generation and verification
 timings separately, since they differ by four orders of magnitude, and it labels deposit cost
 distinctly so a one-off top-up is not mistaken for per-call latency.
+
+`m402 redeem <amount>` returns unspent credit to NIGHT, so an agent that over-funded is not
+stuck. The receipt secret is written to the agent's state file before the transaction is
+submitted, so a crash between paying and claiming is recoverable.
 
 ## 8. Failure modes
 
