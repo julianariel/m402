@@ -6,6 +6,15 @@ import { base, baseSepolia } from 'viem/chains';
 import { wrapFetchWithPayment } from 'x402-fetch';
 import type { Dispatch } from './routes.js';
 
+export function headersForUpstream(req: Request): Headers {
+  const headers = new Headers(req.headers);
+  // The Midnight receipt secret is a bearer credential for the m402 gateway,
+  // never metadata for either the merchant origin or an external x402 service.
+  headers.delete(PAYMENT_HEADER);
+  headers.delete('host');
+  return headers;
+}
+
 export async function dispatchOrigin(service: Service, req: Request, timeoutMs = 10_000): Promise<Response> {
   const incoming = new URL(req.url);
   const suffix = incoming.pathname.replace(/^\/s\/[^/]+/, '');
@@ -13,9 +22,7 @@ export async function dispatchOrigin(service: Service, req: Request, timeoutMs =
   target.pathname = target.pathname.replace(/\/$/, '') + suffix;
   target.search = incoming.search;
 
-  const headers = new Headers(req.headers);
-  headers.delete(PAYMENT_HEADER);
-  headers.delete('host');
+  const headers = headersForUpstream(req);
 
   const hasBody = !['GET', 'HEAD'].includes(req.method);
   const controller = new AbortController();
@@ -61,7 +68,7 @@ export function loadRelayerPrivateKey(path: string): `0x${string}` {
 // The relayer is a trusted operator fronting USDC on the agent's behalf —
 // this is the one place in the gateway that signs and spends, and it is
 // scoped to exactly that: viem's client here has no access to vault funds.
-export function createRelayDispatcher(relayerKeyFile: string): Dispatch {
+export function createRelayDispatcher(relayerKeyFile: string, maxPayment = 100_000n): Dispatch {
   let cachedKey: `0x${string}` | undefined;
 
   return async function dispatchRelay(service, req) {
@@ -72,12 +79,16 @@ export function createRelayDispatcher(relayerKeyFile: string): Dispatch {
     // x402-fetch's Signer type needs both wallet and public actions on one
     // client — .extend(publicActions) is viem's documented way to combine them.
     const walletClient = createWalletClient({ account, chain, transport: http() }).extend(publicActions);
-    const payFetch = wrapFetchWithPayment(fetch, walletClient);
+    const payFetch = wrapFetchWithPayment(fetch, walletClient, maxPayment);
+    const hasBody = !['GET', 'HEAD'].includes(req.method);
+    // x402-fetch retries after the initial 402, so the body must be reusable.
+    const body = hasBody ? await req.arrayBuffer() : undefined;
 
     try {
       const upstream = await payFetch(service.target, {
         method: req.method,
-        headers: req.headers,
+        headers: headersForUpstream(req),
+        body,
       });
       return new Response(upstream.body, { status: upstream.status, headers: upstream.headers });
     } catch (err) {

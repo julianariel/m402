@@ -1,7 +1,8 @@
 # gateway
 
-Hono service: resolves `/s/:id`, verifies payment, dispatches to an origin API or the EVM
-relayer. Holds no funds and signs nothing — it only reads the chain. See
+Hono service: resolves `/s/:id`, verifies payment, and dispatches to an origin API or an EVM
+relayer. Origin mode only reads Midnight chain state. Relay mode additionally holds a funded,
+dedicated EVM payer key and signs x402 payment authorizations. See
 [`../docs/design.md`](../docs/design.md#5-gateway).
 
 ## Request flow
@@ -99,6 +100,8 @@ would trust whatever the caller sends.
 | `INDEXER_URL` | `https://indexer.preview.midnight.network/api/v4/graphql` | HTTP query endpoint |
 | `INDEXER_WS_URL` | `wss://indexer.preview.midnight.network/api/v4/graphql/ws` | Subscription endpoint |
 | `RELAYER_KEY_FILE` | `./relayer.key` | Path to a file holding the relayer's private key — **never** the key itself in an env var; both argv and env-var-as-secret leak through `ps`. Read lazily, only on the first relay dispatch, so the gateway still boots without it for origin-only deployments |
+| `RELAYER_MAX_PAYMENT` | `100000` | Maximum external payment per request in USDC base units (the default is 0.10 USDC) |
+| `RELAY_TARGET_ALLOWLIST` | *(empty)* | Comma-separated exact external URLs accepted for relay registration. Empty denies all relay registrations; keep this list curated before funding the relayer |
 
 ## Running
 
@@ -107,6 +110,36 @@ npm run dev -w gateway     # tsx watch src/index.ts
 npm test -w gateway        # vitest
 npm run typecheck -w gateway
 ```
+
+## Funding a test relayer
+
+Use a dedicated, low-balance Base Sepolia account. The relayer is the x402 payer, so it needs
+test USDC; the facilitator normally pays transaction gas. A small amount of Base Sepolia ETH
+is still useful for diagnostics.
+
+```bash
+umask 077
+printf '0x%s\n' "$(openssl rand -hex 32)" > gateway/relayer.key
+chmod 600 gateway/relayer.key
+node --input-type=module -e "import { readFileSync } from 'node:fs'; import { privateKeyToAccount } from 'viem/accounts'; console.log(privateKeyToAccount(readFileSync('gateway/relayer.key', 'utf8').trim()).address)"
+```
+
+Fund the printed address with Base Sepolia USDC from a testnet faucet. Native USDC on Base
+Sepolia is `0x036CbD53842c5426634e7929541eC2318f3dCF7e`. Then start the gateway with an
+absolute key path, an exact allowlisted x402 URL, and a deliberately small per-request cap:
+
+```bash
+RELAYER_KEY_FILE="$PWD/gateway/relayer.key" \
+RELAY_TARGET_ALLOWLIST="https://verified.example/paid-endpoint" \
+RELAYER_MAX_PAYMENT=10000 \
+npm run dev -w gateway
+```
+
+`10000` is 0.01 USDC. The allowlist is a required trust boundary: without it, arbitrary
+service owners could point the shared payer wallet at an endpoint they control. Keep only the
+amount needed for the test in this account. The current integration uses x402 v1
+(`x402-fetch@1.2.0`), so the selected endpoint must support that protocol version; migrate to
+`@x402/fetch` before relying on a v2-only endpoint.
 
 ## What's manual, not automated
 
@@ -117,6 +150,5 @@ npm run typecheck -w gateway
   pattern in `contracts/src/test/deploy.test.ts` (which *has* run against Preview) defensively.
 - **Full relay flow** (a real x402 service, USDC payment, response returned) needs manual
   verification — see #12.
-- **The gateway's own `POST /services` ownership check has not been run against a real
-  registration** yet — it needs `VAULT_ADDRESS` and an actual `registerService` transaction to
-  exercise the `'match'`/`'mismatch'` paths for real, not just the unit-tested fakes.
+- The gateway's `POST /services` ownership check was exercised against a real Preview
+  `registerService` transaction. Relay dispatch remains the unverified external leg.

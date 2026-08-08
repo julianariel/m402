@@ -110,6 +110,16 @@ describe('createRelayDispatcher', () => {
     const { createRelayDispatcher } = await import('../src/dispatch.js');
     expect(() => createRelayDispatcher('/nonexistent/relayer.key')).not.toThrow();
   });
+
+  it('strips the Midnight receipt before constructing an external request', async () => {
+    const { headersForUpstream } = await import('../src/dispatch.js');
+    const headers = headersForUpstream(new Request('http://gateway.local/s/relay', {
+      headers: { 'X-Payment': 'midnight-secret', 'X-Correlation': 'keep-me' },
+    }));
+
+    expect(headers.get('X-Payment')).toBeNull();
+    expect(headers.get('X-Correlation')).toBe('keep-me');
+  });
 });
 
 describe('createDispatch', () => {
