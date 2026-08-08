@@ -191,7 +191,7 @@ export async function stopAgentContext(context: AgentContext): Promise<void> {
   await context.wallet.stop();
 }
 
-type ClientCircuit = 'registerService' | 'deposit' | 'pay' | 'redeem';
+type ClientCircuit = 'registerService' | 'deposit' | 'pay' | 'redeem' | 'withdraw';
 
 async function submit<PCK extends ClientCircuit>(
   context: AgentContext,
@@ -202,7 +202,9 @@ async function submit<PCK extends ClientCircuit>(
       ? [bigint]
       : PCK extends 'pay'
         ? [Uint8Array]
-        : [Uint8Array],
+        : PCK extends 'withdraw'
+          ? [Uint8Array, bigint]
+          : [Uint8Array],
   onSubmitted?: (submitted: SubmittedCall) => Promise<void> | void,
 ): Promise<TransactionTiming> {
   const timing = instrumentProofProvider(context.providers.proofProvider, context.onPhase);
@@ -391,4 +393,25 @@ export async function redeemCredit(
   const walletState = await Rx.firstValueFrom(context.wallet.wallet.state());
   const recipient = new Uint8Array(walletState.unshielded.address.data);
   return submit(context, 'redeem', [recipient], ({ txId }) => callbacks.onSubmitted?.({ txId }));
+}
+
+/**
+ * Claim a merchant's accrued balance.
+ *
+ * `withdraw` authenticates nobody: the payout address is read from `serviceOwner` on the
+ * ledger, so whoever submits this, the NIGHT reaches the merchant who registered the
+ * service. That makes it safe to submit from any funded wallet — useful when the
+ * merchant's own wallet cannot build a transaction.
+ *
+ * `serviceId` only selects which owner to pay. Any service belonging to that owner
+ * resolves to the same `merchantBalance` entry.
+ */
+export async function withdrawMerchantBalance(
+  context: AgentContext,
+  serviceId: Uint8Array,
+  amount: bigint,
+  callbacks: RedeemCallbacks = {},
+): Promise<TransactionTiming> {
+  if (amount <= 0n) throw new Error('Withdraw amount must be positive.');
+  return submit(context, 'withdraw', [serviceId, amount], ({ txId }) => callbacks.onSubmitted?.({ txId }));
 }
