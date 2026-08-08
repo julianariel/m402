@@ -1,0 +1,9 @@
+:root{
+--dur-instant:80ms;--dur-fast:140ms;--dur-base:220ms;--dur-slow:400ms;--dur-slower:700ms;
+--ease-standard:cubic-bezier(.2,0,.2,1);--ease-out:cubic-bezier(0,0,.2,1);--ease-in:cubic-bezier(.4,0,1,1);--ease-linear:linear;
+--transition-control:background-color var(--dur-fast) var(--ease-standard),border-color var(--dur-fast) var(--ease-standard),color var(--dur-fast) var(--ease-standard),opacity var(--dur-fast) var(--ease-standard);
+}
+@keyframes m402-pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes m402-spin{to{transform:rotate(360deg)}}
+@keyframes m402-scan{from{transform:translateY(-100%)}to{transform:translateY(300%)}}
+@media (prefers-reduced-motion:reduce){:root{--dur-instant:0ms;--dur-fast:0ms;--dur-base:0ms;--dur-slow:0ms;--dur-slower:0ms;}}

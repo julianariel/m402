@@ -33,3 +33,15 @@ export const PAYMENT_HEADER = 'X-Payment';
 export const RECEIPT_DOMAIN = 'm402:receipt:v1';
 export const SERVICE_ID_DOMAIN = 'm402:sid:v1';
 export const CREDIT_DOMAIN = 'm402:credit:v1';
+
+/**
+ * Fixed USD → STAR conversion rate, applied once at registration (design.md §4).
+ * One source of truth so the publish form, the explorer, and the CLI never each
+ * hardcode their own copy of this number.
+ */
+export const USD_TO_STAR_RATE = 50_000;
+
+/** STAR is what goes on-chain; the USD figure is display-only and drifts. */
+export function usdToStar(usd: number): bigint {
+  return BigInt(Math.round(usd * USD_TO_STAR_RATE));
+}

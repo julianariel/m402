@@ -1,0 +1,10 @@
+@import url("https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=Outfit:wght@200;300;400;500;600;700&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap");
+:root{
+/* Display: Archivo at an expanded width axis — wide, bold, geometric. */
+--font-display:"Archivo",system-ui,-apple-system,"Helvetica Neue",sans-serif;
+--font-body:"Outfit",system-ui,-apple-system,"Helvetica Neue",sans-serif;
+--font-mono:"Space Mono","SFMono-Regular",Menlo,Consolas,monospace;
+/* Width axis for display type. 100 = normal, 125 = widest. */
+--display-wdth:118;
+--display-wdth-tight:110;
+}

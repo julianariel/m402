@@ -1,0 +1,7 @@
+:root{
+--space-0:0px;--space-1:2px;--space-2:4px;--space-3:8px;--space-4:12px;--space-5:16px;--space-6:20px;--space-7:24px;--space-8:32px;--space-9:40px;--space-10:48px;--space-11:64px;--space-12:80px;--space-13:120px;
+--gutter:24px;--page-pad:32px;--section-y:96px;
+--container-sm:640px;--container-md:880px;--container-lg:1140px;--container-xl:1360px;
+--control-h-sm:28px;--control-h-md:36px;--control-h-lg:44px;
+--border-w:1px;--border-w-strong:2px;
+}

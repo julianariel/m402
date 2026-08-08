@@ -1,0 +1,21 @@
+:root{
+--fs-display-1:64px;--fs-display-2:48px;--fs-h1:36px;--fs-h2:28px;--fs-h3:22px;--fs-h4:18px;
+--fs-body-lg:17px;--fs-body:15px;--fs-body-sm:13px;--fs-caption:12px;--fs-micro:11px;
+--fs-mono-lg:15px;--fs-mono:13px;--fs-mono-sm:12px;--fs-mono-xs:11px;
+
+--lh-tight:1.05;--lh-snug:1.2;--lh-heading:1.25;--lh-body:1.55;--lh-relaxed:1.7;--lh-mono:1.5;
+
+--fw-light:300;--fw-regular:400;--fw-medium:500;--fw-semibold:600;--fw-bold:700;
+
+--ls-display:-0.03em;--ls-heading:-0.02em;--ls-body:0;--ls-mono:-0.01em;--ls-label:0.08em;--ls-eyebrow:0.14em;
+
+/* Composite type roles */
+--text-display:var(--fw-bold) var(--fs-display-1)/var(--lh-tight) var(--font-display);
+--text-h1:var(--fw-bold) var(--fs-h1)/var(--lh-heading) var(--font-display);
+--text-h2:var(--fw-bold) var(--fs-h2)/var(--lh-heading) var(--font-display);
+--text-h3:var(--fw-semibold) var(--fs-h3)/var(--lh-snug) var(--font-display);
+--text-body:var(--fw-regular) var(--fs-body)/var(--lh-body) var(--font-body);
+--text-label:var(--fw-medium) var(--fs-body-sm)/1.3 var(--font-body);
+--text-eyebrow:var(--fw-bold) var(--fs-micro)/1.2 var(--font-mono);
+--text-code:var(--fw-regular) var(--fs-mono)/var(--lh-mono) var(--font-mono);
+}

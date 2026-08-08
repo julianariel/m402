@@ -1,0 +1,74 @@
+:root{
+/* Midnight core — from midnight.network/brand-hub */
+--m-black:#0A0A0A;--m-white:#FFFFFF;--m-blue:#0000FE;
+
+/* Blue ramp — public / on-chain / links */
+--blue-900:#000066;--blue-800:#0000A6;--blue-700:#0000D6;--blue-600:#0000FE;--blue-500:#2B2BFF;--blue-400:#5757FF;--blue-300:#8686FF;--blue-200:#B9B9FF;--blue-100:#E4E4FF;
+--blue-tint:#0A0A2E;
+
+/* Shield ramp — private / shielded / verified */
+--shield-700:#00A874;--shield-600:#00C98C;--shield-500:#00E6A0;--shield-400:#4DEFBF;--shield-300:#8FF6D8;--shield-100:#D6FCF0;
+--shield-tint:#05261D;
+
+/* Signal ramps */
+--amber-500:#FFB020;--amber-300:#FFD37A;--amber-tint:#2B1F06;
+--red-500:#FF4D4D;--red-300:#FF9494;--red-tint:#2B0C0C;
+
+/* Ink ramp — dark-first neutrals */
+--ink-1000:#0A0A0A;--ink-950:#0E0E0E;--ink-900:#131313;--ink-850:#181818;--ink-800:#1E1E1E;--ink-700:#262626;--ink-600:#333333;--ink-500:#4D4D4D;--ink-400:#6B6B6B;--ink-300:#8F8F8F;--ink-200:#B5B5B5;--ink-100:#DCDCDC;--ink-50:#F2F2F2;--ink-0:#FFFFFF;
+
+/* ── Semantic aliases (dark is the default theme) ── */
+--bg-canvas:var(--ink-1000);
+--bg-surface:var(--ink-900);
+--bg-raised:var(--ink-850);
+--bg-inset:var(--ink-950);
+--bg-hover:rgba(255,255,255,.04);
+--bg-active:rgba(255,255,255,.08);
+--bg-scrim:rgba(5,5,5,.72);
+
+--text-primary:var(--ink-0);
+--text-secondary:var(--ink-100);
+--text-muted:var(--ink-200);
+--text-faint:var(--ink-300);
+--text-decorative:var(--ink-500);
+--text-inverse:var(--ink-1000);
+--text-link:var(--blue-300);
+--text-link-hover:var(--blue-200);
+
+--border-subtle:var(--ink-800);
+--border-default:var(--ink-700);
+--border-strong:var(--ink-600);
+--border-focus:var(--blue-400);
+
+--accent:var(--m-blue);
+--accent-hover:var(--blue-500);
+--accent-fg:var(--m-white);
+--accent-quiet:var(--blue-tint);
+
+/* Protocol state semantics — the core of the m402 palette */
+--state-private:var(--shield-500);
+--state-private-bg:var(--shield-tint);
+--state-public:var(--blue-400);
+--state-public-bg:var(--blue-tint);
+--state-pending:var(--amber-500);
+--state-pending-bg:var(--amber-tint);
+--state-error:var(--red-500);
+--state-error-bg:var(--red-tint);
+
+--focus-ring:0 0 0 2px var(--ink-1000),0 0 0 4px var(--blue-500);
+}
+
+/* Light scope — inverted, for print, docs and light embeds */
+.m402-light{
+--bg-canvas:var(--ink-0);--bg-surface:#FAFAFA;--bg-raised:var(--ink-0);--bg-inset:var(--ink-50);
+--bg-hover:rgba(10,10,10,.04);--bg-active:rgba(10,10,10,.08);--bg-scrim:rgba(10,10,10,.4);
+--text-primary:var(--ink-1000);--text-secondary:var(--ink-700);--text-muted:var(--ink-600);--text-faint:var(--ink-500);--text-decorative:var(--ink-300);--text-inverse:var(--ink-0);
+--text-link:var(--m-blue);--text-link-hover:var(--blue-800);
+--border-subtle:#EDEDED;--border-default:#DEDEDE;--border-strong:#C4C4C4;
+--accent-quiet:var(--blue-100);
+--state-private:var(--shield-700);--state-private-bg:var(--shield-100);
+--state-public:var(--m-blue);--state-public-bg:var(--blue-100);
+--state-pending:#B87600;--state-pending-bg:#FFF3DC;
+--state-error:#D32020;--state-error-bg:#FFE5E5;
+--focus-ring:0 0 0 2px var(--ink-0),0 0 0 4px var(--blue-400);
+}
