@@ -201,6 +201,30 @@ describe('createRelayDispatcher', () => {
   });
 });
 
+// In x402 v2 the spend cap is a policy that filters the offers a server advertises,
+// not an argument to the fetch wrapper. If it lets an over-cap offer through, the
+// relayer signs it — so this is the guard on every external payment the gateway makes.
+describe('maxPaymentPolicy', () => {
+  const requirements = (amounts: string[]) => amounts.map((amount) => ({ amount })) as never;
+
+  it('keeps offers at or below the cap and drops the rest', async () => {
+    const { maxPaymentPolicy } = await import('../src/dispatch.js');
+    const kept = maxPaymentPolicy(10_000n)(2, requirements(['1000', '10000', '10001', '100000']));
+    expect(kept.map((r) => (r as { amount: string }).amount)).toEqual(['1000', '10000']);
+  });
+
+  it('reads maxAmountRequired from a v1 offer', async () => {
+    const { maxPaymentPolicy } = await import('../src/dispatch.js');
+    const v1 = [{ maxAmountRequired: '500' }, { maxAmountRequired: '50000' }] as never;
+    expect(maxPaymentPolicy(1000n)(1, v1)).toHaveLength(1);
+  });
+
+  it('drops an offer with no amount rather than treating it as free', async () => {
+    const { maxPaymentPolicy } = await import('../src/dispatch.js');
+    expect(maxPaymentPolicy(10_000n)(2, [{}, { amount: 'not-a-number' }] as never)).toHaveLength(0);
+  });
+});
+
 describe('createDispatch', () => {
   it('routes to the origin function for type origin', async () => {
     const { createDispatch } = await import('../src/dispatch.js');

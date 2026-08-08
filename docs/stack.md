@@ -86,8 +86,11 @@ a static SPA avoids fighting SSR and hydration for no benefit.
 
 ## EVM
 
-**viem**, with the client selected from the `Service.chain` CAIP-2 string. Base is used for
-development because that is where the x402 ecosystem is; nothing is Base-specific.
+**x402 v2** — `@x402/fetch` with `@x402/evm`'s exact-payment scheme, and **viem** for the
+signing account. `Service.chain` (CAIP-2) selects the one network the scheme is registered
+for, so a relay service can only ever induce a payment on the chain it declared. The
+per-request spend cap is a payment policy that filters offers before signing. Base is used
+because that is where the x402 ecosystem is; nothing is Base-specific.
 
 ## Deployment
 

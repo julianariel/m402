@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { PAYMENT_HEADER, type Service } from '@m402/shared';
-import { createWalletClient, http, publicActions, type Chain } from 'viem';
+import { type Chain } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { base, baseSepolia } from 'viem/chains';
-import { wrapFetchWithPayment } from 'x402-fetch';
+import { wrapFetchWithPayment, x402Client, decodePaymentResponseHeader, type Network, type PaymentPolicy } from '@x402/fetch';
+import { registerExactEvmScheme } from '@x402/evm/exact/client';
 import type { Dispatch } from './routes.js';
 
 export function headersForUpstream(req: Request): Headers {
@@ -110,31 +111,72 @@ export function loadRelayerPrivateKey(path: string): `0x${string}` {
   return content as `0x${string}`;
 }
 
+// x402 v2 moved the spend cap out of wrapFetchWithPayment and into a policy that
+// filters the offers a server advertises. Anything over the cap is dropped before
+// the signer ever sees it, so an expensive offer fails to select rather than paying.
+// v2 offers carry `amount`; v1 offers carry `maxAmountRequired`.
+export function maxPaymentPolicy(maxPayment: bigint): PaymentPolicy {
+  return (_x402Version, requirements) =>
+    requirements.filter((r) => {
+      const raw = (r as { amount?: string; maxAmountRequired?: string }).amount ?? (r as { maxAmountRequired?: string }).maxAmountRequired;
+      if (raw === undefined) return false;
+      try {
+        return BigInt(raw) <= maxPayment;
+      } catch {
+        return false;
+      }
+    });
+}
+
 // The relayer is a trusted operator fronting USDC on the agent's behalf —
 // this is the one place in the gateway that signs and spends, and it is
-// scoped to exactly that: viem's client here has no access to vault funds.
+// scoped to exactly that: the signer here has no access to vault funds.
 export function createRelayDispatcher(relayerKeyFile: string, maxPayment = 100_000n): Dispatch {
   let cachedKey: `0x${string}` | undefined;
 
   return async function dispatchRelay(service, req) {
     if (!service.chain) throw new Error(`relay service ${service.id} is missing chain`);
-    const chain = chainFromCaip2(service.chain);
+    // Not used to build a transport any more — kept as the gate that rejects a
+    // chain we have not deliberately wired up, before any key is loaded.
+    chainFromCaip2(service.chain);
     cachedKey ??= loadRelayerPrivateKey(relayerKeyFile);
     const account = privateKeyToAccount(cachedKey);
-    // x402-fetch's Signer type needs both wallet and public actions on one
-    // client — .extend(publicActions) is viem's documented way to combine them.
-    const walletClient = createWalletClient({ account, chain, transport: http() }).extend(publicActions);
-    const payFetch = wrapFetchWithPayment(fetch, walletClient, maxPayment);
+
+    // `networks` is deliberately the single declared chain. Left unset,
+    // registerExactEvmScheme registers the eip155:* wildcard, and a service that
+    // advertises a mainnet offer would be payable with real funds.
+    const client = new x402Client();
+    registerExactEvmScheme(client, {
+      signer: account,
+      networks: [service.chain as Network],
+      policies: [maxPaymentPolicy(maxPayment)],
+    });
+
+    const payFetch = wrapFetchWithPayment(fetch, client);
     const hasBody = !['GET', 'HEAD'].includes(req.method);
-    // x402-fetch retries after the initial 402, so the body must be reusable.
+    // The client retries after the initial 402, so the body must be reusable.
     const body = hasBody ? await req.arrayBuffer() : undefined;
+    // Same builder as the origin path: the agent's path suffix and query reach the
+    // external service, contained to the registered target. A query param can change
+    // what the service quotes, which is what maxPaymentPolicy bounds.
+    const target = buildUpstreamUrl(service.target, req.url);
 
     try {
-      const upstream = await payFetch(service.target, {
+      const upstream = await payFetch(target, {
         method: req.method,
         headers: headersForUpstream(req),
         body,
       });
+      // The settlement header is the only proof a payment actually cleared. A 200
+      // on its own does not distinguish a settled call from a server that skipped it.
+      const settlement = upstream.headers.get('payment-response') ?? upstream.headers.get('x-payment-response');
+      if (settlement) {
+        try {
+          console.log('relay settled', { serviceId: service.id, settlement: decodePaymentResponseHeader(settlement) });
+        } catch {
+          console.log('relay settled, undecodable header', { serviceId: service.id });
+        }
+      }
       return proxyResponse(upstream);
     } catch (err) {
       console.error('relay dispatch failed after a possible USDC payment — absorbed as relayer loss', {

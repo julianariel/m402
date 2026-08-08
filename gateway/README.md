@@ -156,16 +156,56 @@ absolute key path, an exact allowlisted x402 URL, and a deliberately small per-r
 
 ```bash
 RELAYER_KEY_FILE="$PWD/gateway/relayer.key" \
-RELAY_TARGET_ALLOWLIST="https://verified.example/paid-endpoint" \
+RELAY_TARGET_ALLOWLIST="https://tollbooth-hello-testnet.sjwilliams8.workers.dev/hello" \
 RELAYER_MAX_PAYMENT=10000 \
 npm run dev -w gateway
 ```
 
 `10000` is 0.01 USDC. The allowlist is a required trust boundary: without it, arbitrary
-service owners could point the shared payer wallet at an endpoint they control. Keep only the
-amount needed for the test in this account. The current integration uses x402 v1
-(`x402-fetch@1.2.0`), so the selected endpoint must support that protocol version; migrate to
-`@x402/fetch` before relying on a v2-only endpoint.
+service owners could point the shared payer wallet at an endpoint they control. It matches on
+the exact URL string. Keep only the amount needed for the test in this account.
+
+## x402 protocol version
+
+The relay client speaks x402 **v2** (`@x402/fetch` + `@x402/evm`). A v2 server returns its
+requirements in a `payment-required` header with an empty body, and names the network as a
+CAIP-2 id. This is what live services in the
+[Bazaar](https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources) publish.
+
+Two properties of `createRelayDispatcher` are load-bearing:
+
+- **The per-request cap is a `PaymentPolicy`**, not a wrapper argument. It filters the offers a
+  server advertises before the signer sees any of them, so an over-cap offer fails to select
+  rather than being paid.
+- **`registerExactEvmScheme` receives the service's single declared network**, never the
+  `eip155:*` wildcard it would otherwise register. A service that advertises a mainnet offer
+  alongside its testnet one cannot draw real funds.
+
+`routes.ts` independently restricts registration to `SUPPORTED_RELAY_CHAINS`
+(`eip155:8453`, `eip155:84532`); any other chain is rejected with `unsupported-relay-chain`.
+
+## Verified against live networks
+
+Measured 2026-08-08 against Midnight Preview and Base Sepolia.
+
+**The joined flow** — one `m402 call` that pays on Midnight and relays to an external x402
+service — completed end to end:
+
+| | |
+|---|---|
+| service | relay, 500 STAR, `eip155:84532` |
+| target | `https://tollbooth-hello-testnet.sjwilliams8.workers.dev/hello` |
+| agent timings | proof 8.3s · submit 34.2s · chain 1.9s · gateway 5.1s |
+| settlement tx | `0xae41e3fd64c5b9ca33051bb5f310066ce7d5205aa77d116ae46d4f15bfe77d5b` |
+| relayer USDC | 19.995 → 19.994 |
+| result | HTTP 200, the service's JSON body on stdout |
+
+`scripts/probe-relay.ts` exercises the relay leg alone, with no vault or Midnight receipt
+involved. It reads the relayer's USDC balance before and after, so a pass means value actually
+moved — a 200 from a server that skipped settlement does not satisfy it.
+
+The `POST /services` ownership check was exercised against a real Preview `registerService`
+transaction.
 
 ## What's manual, not automated
 
@@ -174,7 +214,3 @@ amount needed for the test in this account. The current integration uses x402 v1
   GraphQL query — but reconnect behaviour under a real socket drop against live Preview is
   still unverified. `createPublicDataSubscribe`'s reconnect-on-error wrapper mirrors the
   pattern in `contracts/src/test/deploy.test.ts` (which *has* run against Preview) defensively.
-- **Full relay flow** (a real x402 service, USDC payment, response returned) needs manual
-  verification — see #12.
-- The gateway's `POST /services` ownership check was exercised against a real Preview
-  `registerService` transaction. Relay dispatch remains the unverified external leg.
