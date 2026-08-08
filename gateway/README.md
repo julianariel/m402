@@ -137,6 +137,16 @@ npm test -w gateway        # vitest
 npm run typecheck -w gateway
 ```
 
+An `origin`-type service needs something listening at its target, or the health probe fails
+and `/s/:id` answers `503 origin-down` instead of a 402. `scripts/origin-mock.ts` is a
+dependency-free stand-in that answers the `HEAD` probe and echoes the forwarded path:
+
+```bash
+node --experimental-strip-types gateway/scripts/origin-mock.ts   # :9099, override with PORT
+```
+
+`relay`-type services need no local origin — the target is the external x402 service.
+
 ## Funding a test relayer
 
 Use a dedicated, low-balance Base Sepolia account. The relayer is the x402 payer, so it needs
