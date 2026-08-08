@@ -58,6 +58,8 @@ export type AgentContextOptions = {
   syncTimeoutMs?: number;
   privateStateStoreName?: string;
   midnightDbName?: string;
+  /** Directory for cached wallet sync state. Omit to sync from the start on every run. */
+  syncCacheDir?: string;
   onPhase?: (phase: AgentPhase) => void;
 };
 
@@ -138,12 +140,20 @@ export async function buildAgentContext(options: AgentContextOptions): Promise<A
   const logger = pino({ level: process.env['M402_DEBUG'] ? 'debug' : 'silent' });
 
   options.onPhase?.('starting-wallet');
-  const wallet = await MidnightWalletProvider.build(logger, environment(options.config), options.secret);
+  const wallet = await MidnightWalletProvider.build(
+    logger,
+    environment(options.config),
+    options.secret,
+    options.syncCacheDir ? { dir: options.syncCacheDir } : undefined,
+  );
   await wallet.start();
 
   try {
     options.onPhase?.('syncing-wallet');
     await syncWallet(logger, wallet.wallet, options.syncTimeoutMs ?? 60 * 60_000);
+    // Only after a synced state: caching a mid-sync position would resume from somewhere the
+    // wallet never actually applied.
+    await wallet.cacheSyncState();
 
     const providers = buildProviders(wallet, zkConfigPath, options.config, {
       privateStateStoreName: options.privateStateStoreName ?? 'm402-agent-private-state',

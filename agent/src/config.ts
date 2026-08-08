@@ -31,6 +31,7 @@ export type AgentConfig = {
   stateFile: string;
   operationLockFile: string;
   midnightDbName: string;
+  syncCacheDir: string;
 };
 
 function optional(value: string | undefined): string | undefined {
@@ -104,6 +105,9 @@ export function loadAgentConfig(overrides: ConfigOverrides = {}): AgentConfig {
     stateFile,
     operationLockFile: path.join(AGENT_DIR, '.state', `${selected.network}.operation`),
     midnightDbName: path.join(path.dirname(stateFile), 'midnight-level-db-v1'),
+    // Sits beside the private-state DB and is a wallet secret in the same way: it holds the
+    // wallet's synced view, including its coins.
+    syncCacheDir: path.join(path.dirname(stateFile), 'sync-cache'),
   };
 }
 

@@ -38,9 +38,13 @@ export async function withAgentContext<T>(
       config: config.networkConfig,
       contractAddress: vaultAddress,
       secret: readWalletSecret(config),
-      syncTimeoutMs: Number(process.env['MIDNIGHT_SYNC_TIMEOUT_MS'] ?? 60 * 60_000),
+      // Ten minutes, not an hour. syncWallet's deadline is now a total one, so this is the
+      // longest a command can sit before it tells you something is wrong. An hour is
+      // indistinguishable from a hang.
+      syncTimeoutMs: Number(process.env['MIDNIGHT_SYNC_TIMEOUT_MS'] ?? 10 * 60_000),
       privateStateStoreName: `m402-agent-${config.network}-${vaultAddress.slice(0, 12)}`,
       midnightDbName: config.midnightDbName,
+      syncCacheDir: config.syncCacheDir,
       onPhase: (phase) => spinner.update(phaseLabels[phase]),
     });
     return await action(context);
