@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { randomUUID } from 'node:crypto';
-import { hasReceipt, payFor, type PaymentResult } from 'contracts/client';
+import type { PaymentResult } from 'contracts/client';
 import type { AgentConfig } from '../config.js';
 import { CliError } from '../errors.js';
 import { claimResource, requestResource, type ClaimedResource } from '../http.js';
@@ -14,6 +14,7 @@ import {
   withOperationLock,
   type StoredPayment,
 } from '../state.js';
+import { loadClient } from './client.js';
 import { withAgentContext } from './common.js';
 
 export type CallOptions = {
@@ -139,6 +140,9 @@ export async function callCommand(
     }
 
     if (resumable?.status === 'prepared') {
+      // Loaded here, not at module scope, so `--dry-run` above never pays for it. The ESM
+      // registry caches it, so `withAgentContext` importing it again is free.
+      const { hasReceipt } = await loadClient();
       const receiptIsOnChain = await withAgentContext(
         config,
         requirements.vaultAddress,
@@ -157,6 +161,7 @@ export async function callCommand(
     }
 
     output.info(`Network: ${config.network} | Vault: ${requirements.vaultAddress}`);
+    const { payFor } = await loadClient();
     const paymentId = randomUUID();
     let stored: StoredPayment | undefined;
     let payment: PaymentResult;

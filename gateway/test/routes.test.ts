@@ -10,6 +10,7 @@ function testApp(overrides: Partial<RouteDeps> = {}) {
     dispatch: async () => new Response('dispatched'),
     probeOrigin: async () => true,
     checkOwnership: async () => 'match',
+    relayTargetAllowlist: new Set(['https://example.com']),
     vaultAddress: 'vault-address',
     verifyTimeoutMs: 1000,
     ...overrides,
@@ -76,12 +77,19 @@ describe('GET /s/:id', () => {
     expect(await res.json()).toEqual({ reason: 'receipt-already-used' });
   });
 
-  it('returns 402 with the payment body again when the secret paid a different service', async () => {
+  it('returns 402 with the payment body and a reason when the secret paid a different service', async () => {
     const { app, registry } = testApp({ verify: async () => 'wrong-service' });
     registry.insert({ id: 'svc1', price: 500n, owner: 'o', type: 'origin', target: 'https://example.com' });
     const res = await app.request('/s/svc1', { headers: { 'X-Payment': 'receipt-secret-hex' } });
     expect(res.status).toBe(402);
-    expect(await res.json()).toEqual({ serviceId: 'svc1', price: '500', vaultAddress: 'vault-address' });
+    // The `reason` distinguishes this from the opening 402. Without it the two are
+    // byte-identical, and a caller cannot tell a terminal failure from "please pay" (#23).
+    expect(await res.json()).toEqual({
+      serviceId: 'svc1',
+      price: '500',
+      vaultAddress: 'vault-address',
+      reason: 'wrong-service',
+    });
   });
 
   it('returns 503 payment-pending with Retry-After on verification timeout', async () => {
@@ -125,6 +133,65 @@ describe('POST /services', () => {
       body: JSON.stringify({ id: 'svc1', price: '500', owner: 'o', type: 'relay', target: 'https://example.com' }),
     });
     expect(res.status).toBe(400);
+  });
+
+  it('creates an allowlisted relay service on a supported chain', async () => {
+    const { app, registry } = testApp();
+    const res = await app.request('/services', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'svc1',
+        price: '500',
+        owner: 'o',
+        type: 'relay',
+        target: 'https://example.com',
+        chain: 'eip155:84532',
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    expect(registry.get('svc1')?.type).toBe('relay');
+  });
+
+  it('rejects a relay target that the operator has not allowlisted', async () => {
+    const { app, registry } = testApp();
+    const res = await app.request('/services', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'svc1',
+        price: '500',
+        owner: 'o',
+        type: 'relay',
+        target: 'https://attacker.example/paid',
+        chain: 'eip155:84532',
+      }),
+    });
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ reason: 'relay-target-not-allowed' });
+    expect(registry.get('svc1')).toBeUndefined();
+  });
+
+  it('rejects an unsupported relay chain before registration', async () => {
+    const { app, registry } = testApp();
+    const res = await app.request('/services', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'svc1',
+        price: '500',
+        owner: 'o',
+        type: 'relay',
+        target: 'https://example.com',
+        chain: 'eip155:1',
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ reason: 'unsupported-relay-chain' });
+    expect(registry.get('svc1')).toBeUndefined();
   });
 
   it('rejects malformed JSON with 400', async () => {

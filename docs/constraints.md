@@ -197,6 +197,94 @@ A rejected submission also never settles its promise — it waits for a confirma
 never comes. Wrap concurrent submissions in a timeout, or the test hangs instead of
 reporting.
 
+## The wallet builder lives in a test package, and it costs five seconds to import
+
+`contracts/src/lib/wallet.ts` builds the wallet with `FluentWalletBuilder` from
+**`@midnight-ntwrk/testkit-js`**. That is the documented way to assemble a `WalletFacade`, but
+it means a test-harness package sits in the production dependency graph, and it is expensive.
+
+Measured on Node 24 in this repo, cold, `--version` only:
+
+| import | cost |
+|---|---|
+| bare `node -e 0` | 0.11 s |
+| `contracts/pure` (all the gateway needs) | 0.20 s |
+| `contracts/lib/config` | 0.11 s |
+| **`contracts/client`** | **5.20 s** |
+| └ `@midnight-ntwrk/testkit-js` alone | **5.65 s** |
+
+testkit-js alone accounts for essentially all of `contracts/client`. This is not "the Midnight
+SDK is slow" — the gateway imports `contracts/pure` and pays 0.20 s.
+
+Two consequences:
+
+- **Import it lazily from the CLI.** `agent/src/commands/client.ts` loads `contracts/client` at
+  the point of use, so `--version`, `--help`, a mistyped command and `call --dry-run` never pay
+  for a wallet builder they do not call. Before this, `m402 badcommand` took 6.01 s to print
+  "Unknown command". `agent/src/test/cli.test.ts` asserts the startup budget so a top-level
+  import cannot creep back.
+- **The cost does not disappear**, it moves. `deposit`, `redeem` and a real `call` still pay it,
+  which is why `withAgentContext` shows a spinner across the import rather than sitting silent.
+
+Removing testkit-js from the runtime path means rebuilding wallet construction directly on
+`@midnight-ntwrk/wallet-sdk`. Worth doing; not worth doing the day of a demo, since it only
+saves ~5 s on commands that already spend 30–60 s syncing.
+
+## Wallet sync dominates every command, and it replays unless you cache it
+
+A successful Preview deposit measured **739 s total**: proving 27.2 s, confirmation 1.4 s, and
+roughly **710 s of wallet sync**. The chain and the prover are a rounding error; the wallet is
+the cost.
+
+The reason is that `FluentWalletBuilder` can only build from a seed, and a from-seed wallet
+starts at `appliedIndex === 0`. Both `shielded/src/v1/Sync.ts` and `dust-wallet/src/v1/Sync.ts`
+compute `resumeFrom = appliedIndex - 1n` and open the subscription with **no cursor** when that
+is negative — so a fresh wallet streams every event the indexer has, from the beginning, on
+every single invocation.
+
+The sub-wallets expose `serializeState()` and `restore()`. `contracts/src/lib/wallet.ts` now
+persists all three after a synced state is reached and restores them on the next build, so
+`appliedIndex >= 1` and sync resumes. Restore is best-effort: any missing or unreadable file
+falls back to the from-seed build. Two rules that are not obvious:
+
+- **All three sub-wallets and the facade must share one `txHistoryStorage`.** Otherwise
+  shielded and unshielded writes go to a storage the facade never reads.
+- **Never cache before sync completes.** A mid-sync position restores cleanly and resumes from
+  somewhere the wallet never applied.
+
+The cache is keyed by a hash of the master seed and network id, holds the wallet's synced view
+including its coins, and is a wallet secret — `agent/.state/sync-cache`, mode 0600.
+
+## A sub-wallet's sync can die while the command keeps waiting
+
+A transient indexer WebSocket error is enough to kill one sub-wallet's sync fibre — observed on
+Preview as `Wallet.Sync: [object ErrorEvent]` from `wallet-sdk-dust-wallet`, seconds after
+start. The facade goes on emitting state that never becomes strictly complete, so the command
+sits there looking slow rather than failing.
+
+**The deadline is the only thing that ends it, so its value is the whole design.** The CLI used
+60 minutes, which for an operator is indistinguishable from a hang: one such run was killed by
+hand after 25 minutes, still well inside its budget. It is now **10 minutes**, and
+`MIDNIGHT_SYNC_TIMEOUT_MS` overrides it.
+
+A note on the wait itself, since it is easy to get wrong in the other direction: `syncWallet`
+places its deadline *after* the `filter` that tests for a synced state. Emissions that fail the
+filter never reach it, so `Rx.timeout({ each })` there behaves as a total deadline rather than
+an inter-emission one — the two forms were measured as equivalent in this position. The code
+uses an explicit `Rx.race` against a timer so the deadline does not silently depend on where in
+the pipe it sits.
+
+## Paths in `agent/.env` are relative to that file
+
+`readFileSync` resolves a relative path against the process's working directory, not against
+the env file that supplied it. `MIDNIGHT_PREVIEW_MNEMONIC_FILE=.mnemonic` therefore worked when
+run from `agent/` and failed from the repo root with `ENOENT: open '.mnemonic'`, which names
+neither the file it wanted nor where it looked.
+
+`loadAgentConfig` now resolves env-file-sourced paths against `path.dirname(envFile)`, while
+`--mnemonic-file` and `--state-file` still resolve against the working directory, as a CLI
+flag should. `readWalletSecret` reports the resolved absolute path on ENOENT.
+
 ## Node version
 
 The Midnight SDK's ESM exports fail to resolve on Node 23 and Node 26. **Node 22 or 24 only.**

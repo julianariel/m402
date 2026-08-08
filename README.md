@@ -69,6 +69,34 @@ the sender. The vault pools deposited NIGHT and mints a shielded credit against 
 Deposits and redemptions are public; the payments between them are unlinkable — the same
 trade any shielded pool makes.
 
+## Using it from an agent
+
+**Consuming a service needs no Midnight code.** The gateway speaks ordinary HTTP 402, so any
+client in any language completes the exchange in two requests:
+
+```
+GET /s/<service-id>                     -> 402 {serviceId, price, vaultAddress}
+GET /s/<service-id>  X-Payment: <hex>   -> 200 <the resource>
+```
+
+**Paying is the part worth a client.** Turning that `price` into a valid `X-Payment` secret
+means building, proving and submitting a Midnight transaction, then holding the secret durably
+until the resource actually arrives. The CLI does that, so `m402 call <url>` takes the same URL
+`curl` would — it is a `curl` that knows how to pay:
+
+```bash
+m402 deposit 5000                    # once: NIGHT -> shielded credit
+m402 call https://gw.example/s/<id>  # per request, resource on stdout
+m402 redeem 4500 --yes               # unspent credit -> NIGHT
+```
+
+stdout carries only the resource body, so it pipes; progress goes to stderr; exit codes
+distinguish "retry" from "fix your config". Agents must serialize calls — one wallet cannot
+submit two transactions at once.
+
+Full integration notes, exit-code table and recovery semantics:
+[`agent/README.md`](agent/README.md#using-m402-from-an-agent).
+
 ## Layout
 
 | Path | Contents |

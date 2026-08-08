@@ -56,11 +56,55 @@ async function parsePaymentRequired(response: Response): Promise<PaymentRequired
   };
 }
 
-async function describeFailure(response: Response): Promise<Error> {
-  const detail = (await response.text()).trim();
-  const suffix = detail ? `: ${detail.slice(0, 300)}` : '';
+/** The gateway reports why it refused in a JSON `reason` field. Absent on a bare body. */
+function reasonFrom(bodyText: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(bodyText);
+    if (!parsed || typeof parsed !== 'object') return undefined;
+    const reason = (parsed as Record<string, unknown>)['reason'];
+    return typeof reason === 'string' ? reason : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The body is consumed here rather than inside this function: a Response body can only be
+ * read once, and the retry decision needs to inspect `reason` before deciding whether this
+ * is a failure at all.
+ */
+function describeFailure(response: Response, bodyText: string, reason?: string): Error {
+  const suffix = bodyText ? `: ${bodyText.slice(0, 300)}` : '';
+
   if (response.status === 404) return new Error(`Service not found (HTTP 404)${suffix}`);
+
+  // A 402 answering a request that CARRIED a receipt secret is terminal. Retrying cannot
+  // make a spent secret unspent, nor make a secret pay for a service it did not pay for.
+  if (reason === 'receipt-already-used') {
+    return new Error(
+      'This receipt has already been used. The resource was delivered for this payment; ' +
+        'a new call needs a new payment.',
+    );
+  }
+  if (reason === 'wrong-service') {
+    return new Error(
+      'This payment was made for a different service than the one being claimed. ' +
+        'Check that the URL matches the service that was paid for.',
+    );
+  }
+
   return new Error(`Gateway request failed with HTTP ${response.status}${suffix}`);
+}
+
+/** `Retry-After` in seconds. Capped, so a hostile or mistaken gateway cannot stall the CLI. */
+const MAX_RETRY_AFTER_MS = 30_000;
+
+function retryAfterMs(response: Response): number | undefined {
+  const raw = response.headers.get('retry-after');
+  if (!raw) return undefined;
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds) || seconds < 0) return undefined;
+  return Math.min(seconds * 1_000, MAX_RETRY_AFTER_MS);
 }
 
 export async function requestResource(
@@ -79,7 +123,10 @@ export async function requestResource(
       requestMs,
     };
   }
-  if (!response.ok) throw await describeFailure(response);
+  if (!response.ok) {
+    const bodyText = (await response.text()).trim();
+    throw describeFailure(response, bodyText, reasonFrom(bodyText));
+  }
   return { kind: 'resource', response, requestMs };
 }
 
@@ -105,17 +152,33 @@ export async function claimResource(
       signal: options.signal,
     });
 
-    if (response.status !== 402) {
-      if (!response.ok) throw await describeFailure(response);
-      return { response, verifyMs: elapsed(startedAt) };
-    }
+    if (response.ok) return { response, verifyMs: elapsed(startedAt) };
 
-    const delay = retryDelays[attempt];
-    if (delay === undefined) {
+    // Read once. A Response body cannot be consumed twice, and both the retry decision
+    // and the error message need it.
+    const bodyText = (await response.text()).trim();
+    const reason = reasonFrom(bodyText);
+
+    // The ONE retryable case: the payment has landed but the gateway has not yet seen its
+    // receipt on chain. The gateway says so with 503 + `payment-pending` and a Retry-After.
+    //
+    // Matching on the reason and not on 503 alone matters: `dispatch` proxies the origin's
+    // own response, so a genuinely broken origin also arrives as a 503. Retrying that would
+    // hammer a service the agent has already paid for, and the resource is not coming.
+    const isPending = response.status === 503 && reason === 'payment-pending';
+    if (!isPending) throw describeFailure(response, bodyText, reason);
+
+    const ladderDelay = retryDelays[attempt];
+    if (ladderDelay === undefined) {
       throw new Error(
-        'Payment is confirmed, but the gateway has not observed its receipt within the retry window.',
+        'Payment is confirmed, but the gateway has not observed its receipt within the retry ' +
+          'window. The payment is recorded locally — running the same call again resumes it ' +
+          'rather than paying twice.',
       );
     }
+
+    // The gateway's own estimate wins when it offers one; the ladder is the fallback.
+    const delay = retryAfterMs(response) ?? ladderDelay;
     options.onRetry?.(delay, attempt + 1);
     await sleep(delay);
   }

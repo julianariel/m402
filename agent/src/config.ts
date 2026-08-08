@@ -31,6 +31,7 @@ export type AgentConfig = {
   stateFile: string;
   operationLockFile: string;
   midnightDbName: string;
+  syncCacheDir: string;
 };
 
 function optional(value: string | undefined): string | undefined {
@@ -59,31 +60,54 @@ function selectNetwork(value: string): { network: SupportedNetwork; config: Netw
   }
 }
 
+function resolveMnemonicFile(
+  overrides: ConfigOverrides,
+  upper: string,
+  fromEnvFile: (value: string) => string,
+): string | undefined {
+  const flag = optional(overrides.mnemonicFile);
+  if (flag) return path.resolve(flag);
+
+  const fromEnv =
+    optional(process.env[`MIDNIGHT_${upper}_MNEMONIC_FILE`]) ??
+    optional(process.env['MIDNIGHT_MNEMONIC_FILE']);
+  return fromEnv ? fromEnvFile(fromEnv) : undefined;
+}
+
 export function loadAgentConfig(overrides: ConfigOverrides = {}): AgentConfig {
-  loadOptionalEnvFile(path.resolve(overrides.envFile ?? path.join(AGENT_DIR, '.env')));
+  const envFile = path.resolve(overrides.envFile ?? path.join(AGENT_DIR, '.env'));
+  loadOptionalEnvFile(envFile);
+
+  // A relative path inside the env file is written relative to that file, not to whatever
+  // directory the user happens to run `m402` from. Resolving it against cwd made
+  // `MIDNIGHT_PREVIEW_MNEMONIC_FILE=.mnemonic` work from agent/ and fail everywhere else
+  // with a bare `ENOENT: open '.mnemonic'`. Flags still resolve against cwd, as a CLI should.
+  const fromEnvFile = (value: string) => path.resolve(path.dirname(envFile), value);
 
   const privateStatePassword = process.env['M402_PRIVATE_STATE_PASSWORD'];
   if (privateStatePassword) validatePassword(privateStatePassword);
 
   const selected = selectNetwork(optional(overrides.network) ?? process.env['MIDNIGHT_NETWORK'] ?? 'preview');
   const upper = selected.network.toUpperCase();
-  const stateFile = path.resolve(
-    optional(overrides.stateFile) ??
-      process.env['M402_STATE_FILE'] ??
-      path.join(AGENT_DIR, '.state', `${selected.network}.json`),
-  );
+  const stateFileOverride = optional(overrides.stateFile);
+  const stateFileFromEnv = optional(process.env['M402_STATE_FILE']);
+  const stateFile = stateFileOverride
+    ? path.resolve(stateFileOverride)
+    : stateFileFromEnv
+      ? fromEnvFile(stateFileFromEnv)
+      : path.join(AGENT_DIR, '.state', `${selected.network}.json`);
 
   return {
     network: selected.network,
     networkConfig: selected.config,
     vaultAddress: optional(overrides.vaultAddress) ?? optional(process.env['M402_VAULT_ADDRESS']),
-    mnemonicFile:
-      optional(overrides.mnemonicFile) ??
-      optional(process.env[`MIDNIGHT_${upper}_MNEMONIC_FILE`]) ??
-      optional(process.env['MIDNIGHT_MNEMONIC_FILE']),
+    mnemonicFile: resolveMnemonicFile(overrides, upper, fromEnvFile),
     stateFile,
     operationLockFile: path.join(AGENT_DIR, '.state', `${selected.network}.operation`),
     midnightDbName: path.join(path.dirname(stateFile), 'midnight-level-db-v1'),
+    // Sits beside the private-state DB and is a wallet secret in the same way: it holds the
+    // wallet's synced view, including its coins.
+    syncCacheDir: path.join(path.dirname(stateFile), 'sync-cache'),
   };
 }
 
@@ -112,7 +136,21 @@ export function readWalletSecret(config: AgentConfig): WalletSecret {
     );
   }
 
-  const raw = readFileSync(config.mnemonicFile, 'utf8');
+  let raw: string;
+  try {
+    raw = readFileSync(config.mnemonicFile, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    // Name the resolved absolute path. The raw ENOENT reports only the configured string,
+    // so a relative path in agent/.env produced `open '.mnemonic'` with no hint of where
+    // the CLI actually looked.
+    throw new Error(
+      `No wallet file at ${config.mnemonicFile}. ` +
+        `Point MIDNIGHT_${config.network.toUpperCase()}_MNEMONIC_FILE at the file holding the ` +
+        'mnemonic; a relative path is taken relative to agent/.env.',
+    );
+  }
+
   const mnemonic = raw
     .replace(/\d+[.)]/g, ' ')
     .trim()

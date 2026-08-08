@@ -1,6 +1,5 @@
 import { createInterface } from 'node:readline/promises';
 import { randomUUID } from 'node:crypto';
-import { redeemCredit } from 'contracts/client';
 import {
   requirePrivateStatePassword,
   requireVaultAddress,
@@ -16,6 +15,7 @@ import {
   updateRedeemStatus,
   withOperationLock,
 } from '../state.js';
+import { loadClient } from './client.js';
 import { parsePositiveAmount, withAgentContext } from './common.js';
 
 async function confirmRedeem(amount: bigint): Promise<boolean> {
@@ -51,6 +51,9 @@ export async function redeemCommand(
   }
 
   output.info(`Network: ${config.network} | Vault: ${vaultAddress}`);
+  // After the confirmation prompt, so the question appears immediately rather than five
+  // seconds after the user runs the command (see ./client.ts).
+  const { redeemCredit } = await loadClient();
   const timing = await withOperationLock(config.operationLockFile, async () => {
     const unresolved = await findUnresolvedRedeem(config.stateFile, vaultAddress);
     if (unresolved) {

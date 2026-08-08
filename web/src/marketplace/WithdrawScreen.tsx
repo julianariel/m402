@@ -8,6 +8,7 @@ import { useWalletContext } from '../wallet/WalletContext';
 import { fetchVaultLedger, servicesOwnedBy } from '../chain/ledger';
 import { withdrawBalance, type TxPhase } from '../chain/circuits';
 import { VAULT_ADDRESS } from '../lib/vault';
+import { useNarrow } from '../lib/useNarrow';
 
 interface OwnedServiceRow {
   id: string;
@@ -29,6 +30,7 @@ const columns: DataColumn<OwnedServiceRow>[] = [
 const pageStyle = { maxWidth: 'var(--container-lg)', margin: '0 auto', padding: '40px var(--page-pad) 80px' } as const;
 
 export function WithdrawScreen() {
+  const narrow = useNarrow();
   const { connected, connecting, address, ownerBytes, error: walletError, providers, connect } = useWalletContext();
   const [ledgerState, setLedgerState] = useState<LedgerState>({ phase: 'loading' });
   const [amount, setAmount] = useState('');
@@ -126,10 +128,10 @@ export function WithdrawScreen() {
         <HashChip label="connected" value={address ?? ''} tone="public" head={12} tail={6} />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 'var(--space-6)', alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: narrow ? 'minmax(0,1fr)' : '1fr 340px', gap: 'var(--space-6)', alignItems: 'start' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
           <Card padding="lg">
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 'var(--space-7)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: narrow ? 'minmax(0,1fr)' : 'repeat(2,1fr)', gap: 'var(--space-7)' }}>
               <StatBlock label="Claimable" value={ledgerState.balance.toLocaleString()} unit="STAR" tone="accent" delta="public — merchantBalance" />
               <StatBlock label="Payers known" value="0" tone="private" delta="none, by construction" />
             </div>

@@ -36,8 +36,19 @@ export async function startMockGateway(options: {
       response.end(JSON.stringify({ value: 42 }));
       return;
     }
-    if (payment === options.receiptSecret) remainingLaggedClaims--;
 
+    // A valid secret whose receipt the gateway has not observed yet. The real gateway
+    // answers 503 + `payment-pending` + Retry-After here, NOT 402 — this used to return
+    // 402, which is the one status the CLI retried, so the CLI looked correct against
+    // this mock while failing against the real thing. See #23.
+    if (payment === options.receiptSecret) {
+      remainingLaggedClaims--;
+      response.writeHead(503, { 'content-type': 'application/json', 'retry-after': '5' });
+      response.end(JSON.stringify({ reason: 'payment-pending' }));
+      return;
+    }
+
+    // No secret, or one this gateway does not recognise: the opening 402.
     response.writeHead(402, { 'content-type': 'application/json' });
     response.end(JSON.stringify(options.requirements));
   });

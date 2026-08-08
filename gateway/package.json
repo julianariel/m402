@@ -4,9 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "npm run build --workspace=contracts",
     "dev": "tsx watch src/index.ts",
+    "pretest": "npm run build --workspace=contracts",
     "test": "vitest run --passWithNoTests",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc -p tsconfig.test.json"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.0",

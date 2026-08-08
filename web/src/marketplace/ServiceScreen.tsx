@@ -9,6 +9,7 @@ import { payForService } from '../chain/circuits';
 import { useWalletContext } from '../wallet/WalletContext';
 import { GATEWAY_URL } from '../chain/config';
 import { approxUsdOf, safeHostname, shortHex } from './serviceDisplay';
+import { useNarrow } from '../lib/useNarrow';
 
 export interface ServiceScreenProps {
   id: string;
@@ -26,6 +27,7 @@ type PayPhase =
 
 export function ServiceScreen({ id, onBack }: ServiceScreenProps) {
   const wallet = useWalletContext();
+  const narrow = useNarrow();
   const [row, setRow] = useState<GatewayServiceRow | null>(null);
   const [requirements, setRequirements] = useState<PaymentRequired | null>(null);
   const [receipts, setReceipts] = useState<string[]>([]);
@@ -125,7 +127,7 @@ export function ServiceScreen({ id, onBack }: ServiceScreenProps) {
         ← All services
       </button>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1.15fr .85fr', gap: 'var(--space-7)', alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: narrow ? 'minmax(0,1fr)' : '1.15fr .85fr', gap: 'var(--space-7)', alignItems: 'start' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 'var(--space-3)' }}>

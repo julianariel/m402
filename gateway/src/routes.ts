@@ -1,8 +1,11 @@
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import type { Context } from 'hono';
 import { PAYMENT_HEADER, type Service, type PaymentRequired } from '@m402/shared';
 import type { Registry } from './registry.js';
 import type { CheckOwnership } from './ownership.js';
+
+const SUPPORTED_RELAY_CHAINS = new Set(['eip155:8453', 'eip155:84532']);
 
 export type VerifyResult = 'confirmed' | 'timeout' | 'replayed' | 'wrong-service';
 export type Verify = (receiptSecret: string, serviceId: string, timeoutMs: number) => Promise<VerifyResult>;
@@ -15,6 +18,7 @@ export type RouteDeps = {
   dispatch: Dispatch;
   probeOrigin: ProbeOrigin;
   checkOwnership: CheckOwnership;
+  relayTargetAllowlist: ReadonlySet<string>;
   vaultAddress: string;
   verifyTimeoutMs: number;
 };
@@ -25,6 +29,12 @@ function paymentRequiredBody(service: Service, vaultAddress: string): PaymentReq
 
 export function createRoutes(deps: RouteDeps): Hono {
   const app = new Hono();
+
+  // Any browser-based agent or merchant UI on a different origin needs to reach this API
+  // directly (POST /services from the web app, GET/X-Payment /s/:id from arbitrary agents) —
+  // there's no session/cookie auth here to protect, so a permissive origin is the right default
+  // for a public payment gateway. PAYMENT_HEADER is custom, so it must be explicitly allowed.
+  app.use('*', cors({ origin: '*', allowHeaders: ['Content-Type', PAYMENT_HEADER], allowMethods: ['GET', 'POST', 'OPTIONS'] }));
 
   const handleService = async (c: Context) => {
     const service = deps.registry.get(c.req.param('id') ?? '');
@@ -50,7 +60,11 @@ export function createRoutes(deps: RouteDeps): Hono {
       return c.json({ reason: 'receipt-already-used' }, 402);
     }
     if (result === 'wrong-service') {
-      return c.json(paymentRequiredBody(service, deps.vaultAddress), 402);
+      // Carries the payment requirements AND a reason. Without the reason this is
+      // byte-identical to the initial 402, so a caller cannot tell "you have not paid"
+      // from "you paid, but for a different service" — and the second is terminal while
+      // the first is the normal opening move. Adding a field is backward compatible.
+      return c.json({ ...paymentRequiredBody(service, deps.vaultAddress), reason: 'wrong-service' }, 402);
     }
 
     return deps.dispatch(service, c.req.raw);
@@ -77,6 +91,12 @@ export function createRoutes(deps: RouteDeps): Hono {
       (body.type !== 'relay' || typeof body.chain === 'string');
 
     if (!valid) return c.body(null, 400);
+    if (body.type === 'relay' && !SUPPORTED_RELAY_CHAINS.has(body.chain)) {
+      return c.json({ reason: 'unsupported-relay-chain' }, 400);
+    }
+    if (body.type === 'relay' && !deps.relayTargetAllowlist.has(body.target)) {
+      return c.json({ reason: 'relay-target-not-allowed' }, 403);
+    }
 
     // Catches a front-run: someone POSTing a serviceId + owner that doesn't
     // match what's actually on-chain, either because the real registerService

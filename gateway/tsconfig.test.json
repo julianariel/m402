@@ -1,0 +1,13 @@
+// `tsconfig.json` covers `src` only, because that is what builds. Tests were therefore
+// never typechecked: vitest transpiles without checking, so a test could omit a REQUIRED
+// dependency of `createRoutes` and still pass, as long as no assertion reached the branch
+// that used it. That is exactly what happened to seam-cli.test.ts.
+//
+// No outDir or rootDir here — this config exists to be checked, never to emit.
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src", "test"]
+}

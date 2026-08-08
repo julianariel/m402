@@ -27,5 +27,12 @@ export const config = {
   // Read lazily by dispatch.ts on the first relay dispatch, not at startup — an origin-only
   // deployment never touches this, so it stays required in .env.example but isn't validated here.
   relayerKeyFile: requireEnv('RELAYER_KEY_FILE'),
+  // Defaulted, not required: an origin-only deployment never relays, and RELAY_TARGET_ALLOWLIST
+  // defaulting to empty is the safe-by-default choice (denies all relay registrations) rather
+  // than a startup requirement. See README's Environment table.
+  relayerMaxPayment: BigInt(process.env.RELAYER_MAX_PAYMENT ?? '100000'),
+  relayTargetAllowlist: new Set(
+    (process.env.RELAY_TARGET_ALLOWLIST ?? '').split(',').map((target) => target.trim()).filter(Boolean)
+  ),
   verifyTimeoutMs: Number(requireEnv('VERIFY_TIMEOUT_MS')),
 };

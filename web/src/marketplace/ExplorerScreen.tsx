@@ -9,6 +9,7 @@ import type { GatewayServiceRow } from '../lib/gateway';
 import { approxUsdOf, labelOf, shortHex } from './serviceDisplay';
 import { useServices } from './useServices';
 import { VaultStatus } from './VaultStatus';
+import { useNarrow } from '../lib/useNarrow';
 
 export interface ExplorerScreenProps {
   onOpenService: (id: string) => void;
@@ -17,6 +18,7 @@ export interface ExplorerScreenProps {
 
 export function ExplorerScreen({ onOpenService, onPublish }: ExplorerScreenProps) {
   const { state, reload } = useServices();
+  const narrow = useNarrow();
   const [tab, setTab] = useState('all');
   const [q, setQ] = useState('');
 
@@ -73,7 +75,7 @@ export function ExplorerScreen({ onOpenService, onPublish }: ExplorerScreenProps
       <VaultStatus />
 
       <Card padding="lg" style={{ marginBottom: 'var(--space-8)' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 'var(--space-7)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: narrow ? 'minmax(0,1fr)' : 'repeat(2,1fr)', gap: 'var(--space-7)' }}>
           <StatBlock label="Services listed" value={String(services.length)} delta="gateway registry — GET /services" />
           <StatBlock label="Amounts revealed" value="0" tone="private" delta="by construction" />
         </div>

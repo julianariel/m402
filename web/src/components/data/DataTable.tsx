@@ -24,8 +24,8 @@ export function DataTable<T extends { id?: string | number } = any>({
 }: DataTableProps<T>) {
   const [hover, setHover] = useState<number | null>(null);
   return (
-    <div {...rest} style={{ border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-card)', overflow: 'hidden', ...style }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+    <div {...rest} style={{ border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-card)', overflow: 'auto', ...style }}>
+      <table style={{ width: '100%', minWidth: 'max-content', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
             {columns.map((c) => (

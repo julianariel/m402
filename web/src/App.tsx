@@ -4,6 +4,7 @@ import { Badge, Button, Card, Icon, TopNav } from './components';
 import { FlowStep, CodeBlock } from './components/protocol';
 import { WalletConnect } from './wallet/WalletConnect';
 import { REPO_URL, openRepo } from './lib/links';
+import { useNarrow } from './lib/useNarrow';
 import { useRoute } from './router';
 import { MarketplaceShell } from './marketplace/MarketplaceShell';
 import { ExplorerScreen } from './marketplace/ExplorerScreen';
@@ -87,11 +88,11 @@ const strongSecondary: CSSProperties = { fontWeight: 'var(--fw-medium)', color: 
 const pBody: CSSProperties = { margin: 0, font: 'var(--fw-regular) var(--fs-body-sm)/1.6 var(--font-body)', color: 'var(--text-muted)' };
 const pNested: CSSProperties = { margin: 'var(--space-3) 0 0', font: 'var(--fw-regular) var(--fs-body-sm)/1.6 var(--font-body)', color: 'var(--text-muted)' };
 const olBody: CSSProperties = { margin: 0, paddingLeft: '1.3em', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', font: 'var(--fw-regular) var(--fs-body-sm)/1.6 var(--font-body)', color: 'var(--text-muted)' };
-const olMuted: CSSProperties = { margin: 'var(--space-3) 0 0', paddingLeft: '1.3em', display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', font: 'var(--fw-regular) var(--fs-body-sm)/1.6 var(--font-body)', color: 'var(--text-muted)' };
 
 const HOME_ANCHORS = new Set(['what', 'compare', 'how', 'ledger', 'roadmap']);
 
 function HomeScreen({ navigate }: { navigate: (path: string) => void }) {
+  const narrow = useNarrow();
   return (
     <div style={{ position: 'relative' }}>
       <WaveField />
@@ -163,7 +164,7 @@ function HomeScreen({ navigate }: { navigate: (path: string) => void }) {
           }}>
             An agent proves it is paying <span style={{ color: 'var(--state-public)' }}>at least the asking price</span> — without revealing <span style={{ color: 'var(--state-private)' }}>how much</span>, or <span style={{ color: 'var(--state-private)' }}>who it is</span>.
           </p>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--space-7)', marginTop: 'var(--space-10)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: narrow ? 'minmax(0,1fr)' : 'repeat(3, 1fr)', gap: 'var(--space-7)', marginTop: 'var(--space-10)' }}>
             <div style={{ paddingTop: 'var(--space-5)', borderTop: '2px solid var(--blue-800)' }}>
               <Badge tone="neutral">Problem</Badge>
               <h3 style={{ margin: 'var(--space-4) 0 0', font: 'var(--fw-semibold) var(--fs-h4)/1.3 var(--font-display)', color: 'var(--text-primary)' }}>Public chains leak strategy</h3>
@@ -185,7 +186,7 @@ function HomeScreen({ navigate }: { navigate: (path: string) => void }) {
         {/* 02 — x402 vs m402 */}
         <Section id="compare">
           <SectionHead n="02" tag="x402 vs m402" title="Same protocol, different ledger" />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-card)', overflow: 'hidden' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: narrow ? 'minmax(0,1fr)' : '1fr 1fr', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-card)', overflow: 'hidden' }}>
             <div style={{ padding: 'var(--space-8) var(--space-7)' }}>
               <Badge tone="neutral">x402</Badge>
               <h3 style={{ margin: 'var(--space-6) 0 0', font: 'var(--fw-semibold) var(--fs-h4)/1.3 var(--font-display)', color: 'var(--text-primary)' }}>Everything settles in public</h3>
@@ -197,7 +198,7 @@ function HomeScreen({ navigate }: { navigate: (path: string) => void }) {
                 <DisclosureRow icon="eye">Remaining balance</DisclosureRow>
               </ul>
             </div>
-            <div style={{ padding: 'var(--space-8) var(--space-7)', background: 'var(--bg-surface)', borderLeft: '1px solid var(--border-subtle)' }}>
+            <div style={{ padding: 'var(--space-8) var(--space-7)', background: 'var(--bg-surface)', borderLeft: narrow ? undefined : '1px solid var(--border-subtle)', borderTop: narrow ? '1px solid var(--border-subtle)' : undefined }}>
               <Badge tone="private" icon="shield-check">m402</Badge>
               <h3 style={{ margin: 'var(--space-6) 0 0', font: 'var(--fw-semibold) var(--fs-h4)/1.3 var(--font-display)', color: 'var(--text-primary)' }}>Only the fact of payment</h3>
               <ul style={{ margin: 'var(--space-5) 0 0', padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -220,11 +221,11 @@ function HomeScreen({ navigate }: { navigate: (path: string) => void }) {
         {/* 03 — How it works */}
         <Section id="how">
           <SectionHead n="03" tag="how it works" title="Four steps" />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-11)', alignItems: 'start' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: narrow ? 'minmax(0,1fr)' : '1fr 1fr', gap: narrow ? 'var(--space-8)' : 'var(--space-11)', alignItems: 'start' }}>
             <div>
               <FlowStep index={1} title="GET the wrapped URL" detail="Gateway answers 402 with serviceId, price, vault." privacy="public" />
               <FlowStep index={2} title="Prove pay() locally" detail="~19s. coin.value never leaves the machine." privacy="private" />
-              <FlowStep index={3} title="Retry with the nullifier" detail="Gateway verifies against the indexer in ~3.4ms." privacy="public" />
+              <FlowStep index={3} title="Retry with the receipt" detail="Gateway verifies against the indexer in ~3.4ms." privacy="public" />
               <FlowStep index={4} title="Resource returned" detail="Origin API, or an x402 service relayed on Base." last />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
@@ -242,13 +243,13 @@ function HomeScreen({ navigate }: { navigate: (path: string) => void }) {
         {/* 04 — On-chain */}
         <Section id="ledger">
           <SectionHead n="04" tag="on-chain" title="What the chain records" />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-7)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: narrow ? 'minmax(0,1fr)' : '1fr 1fr', gap: 'var(--space-7)' }}>
             <div>
               <Badge tone="public" icon="eye" style={{ marginBottom: 'var(--space-5)' }}>Public</Badge>
               <div>
                 <RecordRow><code style={codeMono}>servicePrice</code></RecordRow>
                 <RecordRow><code style={codeMono}>serviceOwner</code></RecordRow>
-                <RecordRow><code style={codeMono}>nullifiers</code> — that a payment happened, once</RecordRow>
+                <RecordRow><code style={codeMono}>receipts</code> — that a payment happened, once</RecordRow>
                 <RecordRow><code style={codeMono}>merchantBalance</code></RecordRow>
                 <RecordRow>deposits &amp; withdrawals</RecordRow>
               </div>
@@ -265,7 +266,7 @@ function HomeScreen({ navigate }: { navigate: (path: string) => void }) {
             </div>
           </div>
           <p style={{ margin: 'var(--space-7) 0 0', maxWidth: '62ch', font: 'var(--fw-regular) var(--fs-body-sm)/1.6 var(--font-body)', color: 'var(--text-muted)' }}>
-            The nullifier commits to the payment, so one payment can be disclosed to an auditor off-chain — that amount and nothing else.
+            The receipt commits to the payment, so one payment can be disclosed to an auditor off-chain — that amount and nothing else.
             <a href="#limitations" style={{ marginLeft: 6 }}>Known limitations, in full, below.</a>
           </p>
         </Section>
@@ -363,13 +364,8 @@ function HomeScreen({ navigate }: { navigate: (path: string) => void }) {
               <a href={REPO_URL + '/blob/main/docs/constraints.md#a-shielded-amount-cannot-be-returned-as-change'} target="_blank" rel="noopener noreferrer">constraints</a>.
             </LimitationEntry>
             <LimitationEntry icon="layers">
-              <strong style={strongSecondary}>Concurrent throughput is unmeasured.</strong> A security review argued that writes to a contract conflict contract-wide rather than per key, which would cap a vault at about one transaction per block. Three attempts to measure it have all failed <em>locally</em>, before either call reached the chain, and every failure mode looks exactly like on-chain contention:
-              <ol style={olMuted}>
-                <li>Both callers shared one LevelDB private-state store. LevelDB is single-writer.</li>
-                <li>Fresh stores, but a fresh store is empty — &ldquo;No private state found&rdquo;.</li>
-                <li>Seeded stores, but a store scopes its keys by contract address — &ldquo;Contract address not set&rdquo;.</li>
-              </ol>
-              <p style={pNested}>The attempt-3 fix is in <code style={codeMono}>deploy.test.ts</code> and has not yet had a green run. Treat the ceiling as unknown until the test reports <strong style={strongSecondary}>2 of 2 landed</strong>. A 0 or a 1 is ambiguous, not a measurement: both callers share one wallet, so the bottleneck could be wallet coin selection rather than the contract. Separating them needs a second funded Preview wallet.</p>
+              <strong style={strongSecondary}>Concurrent throughput is unmeasured.</strong> A security review argued that writes to a contract conflict contract-wide rather than per key, which would cap a vault at about one transaction per block. It stays unmeasured because one wallet cannot submit two transactions at once — the node rejects the second at the DUST layer, before the contract runs, so nothing about contract contention is observable from a single-wallet harness. Measuring it needs a second funded Preview wallet. See{' '}
+              <a href={REPO_URL + '/blob/main/docs/constraints.md#one-wallet-cannot-submit-two-transactions-concurrently'} target="_blank" rel="noopener noreferrer">constraints</a>.
               <p style={pNested}><code style={codeMono}>pay</code> also does a read-modify-write on <code style={codeMono}>merchantBalance[owner]</code>, which conflicts per merchant regardless of how coarse the platform's detection turns out to be. <code style={codeMono}>Map&lt;Bytes&lt;32&gt;, Counter&gt;</code> would remove that, and batching — already on this roadmap and inherited from x402's own — is the general fix.</p>
             </LimitationEntry>
             <LimitationEntry icon="link">
@@ -392,7 +388,7 @@ function HomeScreen({ navigate }: { navigate: (path: string) => void }) {
             </LimitationEntry>
             <LimitationEntry icon="shield">
               <strong style={strongSecondary}>Privacy is bounded by the anonymity set.</strong> An individual payment is unlinkable only among the other payments drawn from the pool. With one depositor and a handful of calls, an observer correlates a public deposit with the receipts that follow it, by amount and by timing — separate transactions are not enough on their own. This is a property of usage rather than of the contract, and it is the same caveat every shielded pool carries.
-              <p style={pNested}>Three things raise it, none of which need code: deposit <strong style={strongSecondary}>round amounts</strong> well above any single price, deposit <strong style={strongSecondary}>ahead of time</strong> rather than immediately before spending, and have <strong style={strongSecondary}>more than one agent</strong> funding the pool. Deposit and payment must never share a transaction — that would bind amount, payer and nullifier into one public record and make the proof pointless.</p>
+              <p style={pNested}>Three things raise it, none of which need code: deposit <strong style={strongSecondary}>round amounts</strong> well above any single price, deposit <strong style={strongSecondary}>ahead of time</strong> rather than immediately before spending, and have <strong style={strongSecondary}>more than one agent</strong> funding the pool. Deposit and payment must never share a transaction — that would bind amount, payer and receipt into one public record and make the proof pointless.</p>
             </LimitationEntry>
             <LimitationEntry icon="radio">
               <strong style={strongSecondary}>Network metadata is out of scope.</strong> The gateway observes IP addresses and timing. m402 addresses protocol-level privacy: agents authenticate with a proof rather than an account, so the gateway never learns who is paying or how much.
@@ -403,8 +399,11 @@ function HomeScreen({ navigate }: { navigate: (path: string) => void }) {
             <LimitationEntry icon="lock">
               <strong style={strongSecondary}>Losing a receipt secret loses the purchase.</strong> Only <code style={codeMono}>hash(secret, serviceId)</code> reaches the chain, so the secret is the only proof a payment happened. It is written to the agent's private state, which is an unreplicated local LevelDB store with a hardcoded development password. Delete the store and the paid-for call cannot be claimed. Accepted for the hackathon; a real deployment needs the secret persisted before the transaction is submitted, not after, and backed up.
             </LimitationEntry>
+            <LimitationEntry icon="clock">
+              <strong style={strongSecondary}>Registration is not optimistic.</strong> <code style={codeMono}>POST /services</code> to the gateway's registry checks <code style={codeMono}>serviceOwner[id]</code> on-chain before accepting the write, and rejects with a retryable <code style={codeMono}>503</code> until the <code style={codeMono}>registerService</code> transaction is visible. This closes the gap where a client could claim ownership the chain never granted, but it means the merchant UI cannot show the service URL immediately — it has to poll/retry through the confirmation window (same order of magnitude as a proof: ~20–30s) rather than badging an unconfirmed state as &ldquo;live&rdquo; early.
+            </LimitationEntry>
             <LimitationEntry icon="circle-alert" last>
-              <strong style={strongSecondary}>The payer-anonymity claim has a test, and that test has not yet passed.</strong> &ldquo;puts no payer identity into a pay transaction&rdquo; in <code style={codeMono}>deploy.test.ts</code> asserts that a <code style={codeMono}>pay</code> transaction carries no unshielded offer and no DUST registration — either would bind the agent's public NIGHT address to the payment. Its first run failed on harness plumbing rather than on the assertion, so the claim is currently reasoned, not demonstrated.
+              <strong style={strongSecondary}>A secret paid for the wrong service degrades to a timeout, sometimes.</strong> The gateway detects this case (<code style={codeMono}>wrong-service</code>) only against services it already knows about at the moment <code style={codeMono}>verify()</code> starts — a service registered <em>during</em> the wait window won't be in that precomputed candidate set, so a secret paid against it would still time out rather than return the more specific result.
             </LimitationEntry>
           </div>
         </Section>

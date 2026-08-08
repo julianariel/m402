@@ -1,6 +1,7 @@
 import { useState, type HTMLAttributes, type ReactNode } from 'react';
 import { Icon } from '../core/Icon';
 import { StatusDot, type StatusDotTone } from '../core/StatusDot';
+import { useNarrow } from '../../lib/useNarrow';
 
 export interface NavItem { value: string; label: string; icon?: string }
 
@@ -18,6 +19,68 @@ export interface TopNavProps extends HTMLAttributes<HTMLElement> {
 /** Product header: wordmark, section links, network state, wallet slot. */
 export function TopNav({ items = [], active, onNavigate, network = 'Preview', networkTone = 'live', right, style, ...rest }: TopNavProps) {
   const [hover, setHover] = useState<string | null>(null);
+  const narrow = useNarrow();
+
+  const wordmark = (
+    <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 2, flexShrink: 0, font: 'var(--fw-bold) 18px/1 var(--font-mono)', letterSpacing: '-0.04em', color: 'var(--text-primary)' }}>
+      m<span style={{ color: 'var(--accent)' }}>402</span>
+    </span>
+  );
+
+  const walletGroup = (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-5)', flexShrink: 0 }}>
+      <StatusDot tone={networkTone} label={network} />
+      {right}
+    </div>
+  );
+
+  // Scrolls instead of wrapping when the row is narrower than its items — wrapped nav
+  // text becomes illegible long before there's any point hiding items behind a menu.
+  const nav = (
+    <nav style={{ display: 'flex', gap: 'var(--space-6)', flex: narrow ? undefined : 1, width: narrow ? '100%' : undefined, minWidth: 0, overflowX: 'auto', scrollbarWidth: 'none' }}>
+      {items.map((raw) => {
+        const it: NavItem = typeof raw === 'string' ? { value: raw, label: raw } : raw;
+        const on = it.value === active;
+        return (
+          <button
+            key={it.value} type="button"
+            onClick={() => onNavigate?.(it.value)}
+            onMouseEnter={() => setHover(it.value)} onMouseLeave={() => setHover(null)}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0, whiteSpace: 'nowrap',
+              background: 'none', border: 'none', padding: 0,
+              font: 'var(--fw-medium) var(--fs-body-sm)/1 var(--font-body)',
+              color: on ? 'var(--text-primary)' : hover === it.value ? 'var(--text-secondary)' : 'var(--text-muted)',
+              cursor: 'pointer', transition: 'var(--transition-control)',
+            }}
+          >
+            {it.icon && <Icon name={it.icon} size={14} />}{it.label}
+          </button>
+        );
+      })}
+    </nav>
+  );
+
+  if (narrow) {
+    return (
+      <header
+        {...rest}
+        style={{
+          display: 'flex', flexDirection: 'column', gap: 'var(--space-4)',
+          padding: 'var(--space-4) var(--space-6)',
+          background: 'rgba(10,10,10,.82)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+          borderBottom: '1px solid var(--border-subtle)', ...style,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-5)', minWidth: 0, overflowX: 'auto', scrollbarWidth: 'none' }}>
+          {wordmark}
+          {walletGroup}
+        </div>
+        {nav}
+      </header>
+    );
+  }
+
   return (
     <header
       {...rest}
@@ -27,32 +90,9 @@ export function TopNav({ items = [], active, onNavigate, network = 'Preview', ne
         borderBottom: '1px solid var(--border-subtle)', ...style,
       }}
     >
-      <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 2, font: 'var(--fw-bold) 18px/1 var(--font-mono)', letterSpacing: '-0.04em', color: 'var(--text-primary)' }}>
-        m<span style={{ color: 'var(--accent)' }}>402</span>
-      </span>
-      <nav style={{ display: 'flex', gap: 'var(--space-6)', flex: 1 }}>
-        {items.map((raw) => {
-          const it: NavItem = typeof raw === 'string' ? { value: raw, label: raw } : raw;
-          const on = it.value === active;
-          return (
-            <button
-              key={it.value} type="button"
-              onClick={() => onNavigate?.(it.value)}
-              onMouseEnter={() => setHover(it.value)} onMouseLeave={() => setHover(null)}
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', padding: 0,
-                font: 'var(--fw-medium) var(--fs-body-sm)/1 var(--font-body)',
-                color: on ? 'var(--text-primary)' : hover === it.value ? 'var(--text-secondary)' : 'var(--text-muted)',
-                cursor: 'pointer', transition: 'var(--transition-control)',
-              }}
-            >
-              {it.icon && <Icon name={it.icon} size={14} />}{it.label}
-            </button>
-          );
-        })}
-      </nav>
-      <StatusDot tone={networkTone} label={network} />
-      {right}
+      {wordmark}
+      {nav}
+      {walletGroup}
     </header>
   );
 }

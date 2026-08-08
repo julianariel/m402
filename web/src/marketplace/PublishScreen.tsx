@@ -9,6 +9,7 @@ import { registerGatewayService } from '../lib/gateway';
 import { GATEWAY_URL } from '../chain/config';
 import { VAULT_ADDRESS } from '../lib/vault';
 import { safeHostname } from './serviceDisplay';
+import { useNarrow } from '../lib/useNarrow';
 
 export interface PublishScreenProps {
   onDone: () => void;
@@ -28,6 +29,7 @@ function hex(bytes: Uint8Array): string {
 
 export function PublishScreen({ onDone }: PublishScreenProps) {
   const wallet = useWalletContext();
+  const narrow = useNarrow();
   const [type, setType] = useState<'origin' | 'relay'>('origin');
   const [url, setUrl] = useState('https://api.example.com/weather');
   const [price, setPrice] = useState('0.01');
@@ -104,7 +106,7 @@ export function PublishScreen({ onDone }: PublishScreenProps) {
         Register any HTTP API with a price and get back a wrapped URL that speaks the x402 flow. You sign the registration yourself — the gateway never holds your keys.
       </p>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 'var(--space-6)', alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: narrow ? 'minmax(0,1fr)' : '1fr 300px', gap: 'var(--space-6)', alignItems: 'start' }}>
         <Card padding="lg">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
             <Field label="Fulfilment" hint="Origin proxies to your API. Relay pays an existing x402 service on an EVM chain.">
