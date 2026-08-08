@@ -91,19 +91,29 @@ would trust whatever the caller sends.
 
 ## Environment
 
-| Variable | Default | Notes |
-|---|---|---|
-| `PORT` | `8787` | |
-| `VAULT_ADDRESS` | *(empty)* | **Required to serve real 402s and payments.** Set once the vault is deployed — see [`../contracts/README.md`](../contracts/README.md). With it unset, `/s/:id` returns `402` with an empty `vaultAddress`, and `/services` POSTs 500 (ownership checks can't query an empty contract address). |
-| `DB_PATH` | `gateway.db` | SQLite file — holds both the service registry and the consumed-receipts table |
-| `INDEXER_URL` | `https://indexer.preview.midnight.network/api/v4/graphql` | HTTP query endpoint |
-| `INDEXER_WS_URL` | `wss://indexer.preview.midnight.network/api/v4/graphql/ws` | Subscription endpoint |
-| `RELAYER_KEY_FILE` | `./relayer.key` | Path to a file holding the relayer's private key — **never** the key itself in an env var; both argv and env-var-as-secret leak through `ps`. Read lazily, only on the first relay dispatch, so the gateway still boots without it for origin-only deployments |
+```bash
+cp .env.example .env    # then edit if your setup differs from the defaults
+```
+
+`src/config.ts` loads `gateway/.env` at startup (`node:process`'s `loadEnvFile` — same mechanism
+`agent/` uses, no `dotenv` dependency) and requires every one of these; there are no hardcoded
+fallbacks in source, so a missing variable fails fast with a message telling you to copy
+`.env.example`.
+
+| Variable | Notes |
+|---|---|
+| `PORT` | |
+| `VAULT_ADDRESS` | Must match `web`'s `VITE_M402_VAULT_ADDRESS` and the agent's `M402_VAULT_ADDRESS` — a payment to a different vault lands where this gateway isn't watching. See [`../contracts/README.md`](../contracts/README.md). |
+| `DB_PATH` | SQLite file — holds both the service registry and the consumed-receipts table |
+| `INDEXER_URL` | HTTP query endpoint |
+| `INDEXER_WS_URL` | Subscription endpoint |
+| `RELAYER_KEY_FILE` | Path to a file holding the relayer's private key — **never** the key itself in an env var; both argv and env-var-as-secret leak through `ps`. The *variable* is required to boot, but the *file* it points to is only read lazily, on the first relay dispatch — an origin-only deployment can point it at a path that doesn't exist yet |
+| `VERIFY_TIMEOUT_MS` | How long `/s/:id` waits for a payment receipt to appear on the indexer before returning `503 payment-pending` |
 
 ## Running
 
 ```bash
-npm run dev -w gateway     # tsx watch src/index.ts
+npm run dev -w gateway     # tsx watch src/index.ts — logs the bound port and vault on startup
 npm test -w gateway        # vitest
 npm run typecheck -w gateway
 ```

@@ -468,9 +468,9 @@ export function App() {
   return (
     <MarketplaceShell route={route} navigate={navigate}>
       {route.name === 'explorer' && (
-        <ExplorerScreen onOpenService={(slug) => navigate('/service/' + slug)} onPublish={() => navigate('/publish')} />
+        <ExplorerScreen onOpenService={(id) => navigate('/service/' + id)} onPublish={() => navigate('/publish')} />
       )}
-      {route.name === 'service' && <ServiceScreen slug={route.slug} onBack={() => navigate('/explorer')} />}
+      {route.name === 'service' && <ServiceScreen id={route.id} onBack={() => navigate('/explorer')} />}
       {route.name === 'publish' && <PublishScreen onDone={() => navigate('/explorer')} />}
       {route.name === 'withdraw' && <WithdrawScreen />}
     </MarketplaceShell>

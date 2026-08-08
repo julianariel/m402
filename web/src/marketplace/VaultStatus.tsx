@@ -38,7 +38,7 @@ export function VaultStatus() {
         <IconButton icon="refresh-cw" label="Re-check" onClick={check} />
       </div>
       <p style={{ margin: 'var(--space-3) 0 0', font: 'var(--fw-regular) var(--fs-caption)/1.5 var(--font-body)', color: 'var(--text-faint)' }}>
-        Checked live against the Midnight Preview indexer. The service list below is illustrative — decoding real registrations needs the compiled contract, which this build doesn't ship.
+        Checked live against the Midnight Preview indexer. The service list below comes from the gateway's own registry (GET /services).
       </p>
     </Card>
   );

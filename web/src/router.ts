@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 export type Route =
   | { name: 'home' }
   | { name: 'explorer' }
-  | { name: 'service'; slug: string }
+  | { name: 'service'; id: string }
   | { name: 'publish' }
   | { name: 'withdraw' };
 
@@ -11,14 +11,14 @@ function parseHash(hash: string): Route {
   const [seg, param] = hash.replace(/^#\/?/, '').split('/');
   switch (seg) {
     case 'explorer': return { name: 'explorer' };
-    case 'service': return param ? { name: 'service', slug: param } : { name: 'explorer' };
+    case 'service': return param ? { name: 'service', id: param } : { name: 'explorer' };
     case 'publish': return { name: 'publish' };
     case 'withdraw': return { name: 'withdraw' };
     default: return { name: 'home' };
   }
 }
 
-/** Minimal hash router — `#/explorer`, `#/service/:slug`, `#/publish`, `#/withdraw`, anything else is home. */
+/** Minimal hash router — `#/explorer`, `#/service/:id`, `#/publish`, `#/withdraw`, anything else is home. */
 export function useRoute(): [Route, (path: string) => void] {
   const [route, setRoute] = useState<Route>(() => parseHash(window.location.hash));
 

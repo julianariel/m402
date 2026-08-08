@@ -1,8 +1,6 @@
-/** m402Vault deployed on Midnight Preview. Public data, safe to override via env. */
-export const DEFAULT_VAULT_ADDRESS = '17b4cf15ad768fa0e5090da960e86eaf7cc885f86eb5a6b241e2fd28d98546ae';
-export const VAULT_ADDRESS: string = import.meta.env['VITE_M402_VAULT_ADDRESS'] ?? DEFAULT_VAULT_ADDRESS;
+import { INDEXER_URL, VAULT_ADDRESS } from '../chain/config';
 
-const INDEXER_URL = 'https://indexer.preview.midnight.network/api/v4/graphql';
+export { VAULT_ADDRESS };
 
 const CONTRACT_STATE_QUERY = `
   query CONTRACT_STATE_QUERY($address: HexEncoded!) {

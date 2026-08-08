@@ -1,31 +1,40 @@
-import { useState } from 'react';
-import { Badge, Button, Card, StatusDot, Tag } from '../components/core';
+import { useMemo, useState } from 'react';
+import { Badge, Button, Card, Tag } from '../components/core';
 import { Input } from '../components/forms';
 import { Tabs } from '../components/navigation';
 import { EmptyState, Tooltip } from '../components/feedback';
 import { DataTable, StatBlock, type DataColumn } from '../components/data';
 import { PriceTag } from '../components/protocol';
-import { SERVICES, type Service } from './data';
+import type { GatewayServiceRow } from '../lib/gateway';
+import { approxUsdOf, labelOf, shortHex } from './serviceDisplay';
+import { useServices } from './useServices';
 import { VaultStatus } from './VaultStatus';
 
 export interface ExplorerScreenProps {
-  onOpenService: (slug: string) => void;
+  onOpenService: (id: string) => void;
   onPublish: () => void;
 }
 
-const TYPE_LABEL: Record<Service['type'], string> = { origin: 'origin', relay: 'relay' };
-
 export function ExplorerScreen({ onOpenService, onPublish }: ExplorerScreenProps) {
+  const { state, reload } = useServices();
   const [tab, setTab] = useState('all');
   const [q, setQ] = useState('');
-  const rows = SERVICES.filter((s) => (tab === 'all' || s.type === tab) && (s.name + s.slug).toLowerCase().includes(q.toLowerCase()));
 
-  const columns: DataColumn<Service>[] = [
+  const services = state.phase === 'loaded' ? state.services : [];
+  const rows = useMemo(
+    () =>
+      services.filter(
+        (s) => (tab === 'all' || s.type === tab) && (labelOf(s) + s.id).toLowerCase().includes(q.toLowerCase()),
+      ),
+    [services, tab, q],
+  );
+
+  const columns: DataColumn<GatewayServiceRow>[] = [
     {
       key: 'name', label: 'Service', render: (r) => (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          <span style={{ font: 'var(--fw-medium) var(--fs-body-sm)/1 var(--font-body)', color: 'var(--text-primary)' }}>{r.name}</span>
-          <span style={{ font: 'var(--fw-regular) var(--fs-mono-xs)/1 var(--font-mono)', color: 'var(--text-faint)' }}>/s/{r.slug}</span>
+          <span style={{ font: 'var(--fw-medium) var(--fs-body-sm)/1 var(--font-body)', color: 'var(--text-primary)' }}>{labelOf(r)}</span>
+          <span style={{ font: 'var(--fw-regular) var(--fs-mono-xs)/1 var(--font-mono)', color: 'var(--text-faint)' }}>/s/{shortHex(r.id)}</span>
         </div>
       ),
     },
@@ -35,9 +44,9 @@ export function ExplorerScreen({ onOpenService, onPublish }: ExplorerScreenProps
           <Badge tone="public" icon="globe">relay</Badge>
           <Tag icon="hash">{r.chain}</Tag>
         </div>
-      ) : <Badge icon="server">{TYPE_LABEL.origin}</Badge>,
+      ) : <Badge icon="server">origin</Badge>,
     },
-    { key: 'price', label: 'Price', render: (r) => <PriceTag usd={r.usd} star={r.star} /> },
+    { key: 'price', label: 'Price', render: (r) => <PriceTag usd={approxUsdOf(r)} star={r.price.toString()} /> },
     {
       key: 'paid', label: 'Amount paid', render: () => (
         <Tooltip content="Payment amounts are witnesses. Nothing on the ledger reveals them.">
@@ -45,8 +54,6 @@ export function ExplorerScreen({ onOpenService, onPublish }: ExplorerScreenProps
         </Tooltip>
       ),
     },
-    { key: 'calls', label: 'Calls', mono: true, align: 'right' },
-    { key: 'state', label: '', render: (r) => <StatusDot tone={r.state === 'live' ? 'live' : 'confirming'} label={r.state === 'live' ? 'live' : 'confirming…'} /> },
   ];
 
   return (
@@ -66,11 +73,9 @@ export function ExplorerScreen({ onOpenService, onPublish }: ExplorerScreenProps
       <VaultStatus />
 
       <Card padding="lg" style={{ marginBottom: 'var(--space-8)' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 'var(--space-7)' }}>
-          <StatBlock label="Pooled reserve" value="48,200" unit="STAR" delta="public — moves only on deposit" />
-          <StatBlock label="Calls settled" value="10,673" tone="accent" delta="volume public, payers not" />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 'var(--space-7)' }}>
+          <StatBlock label="Services listed" value={String(services.length)} delta="gateway registry — GET /services" />
           <StatBlock label="Amounts revealed" value="0" tone="private" delta="by construction" />
-          <StatBlock label="Median proof" value="19.2" unit="s" icon="clock" delta="on the agent's machine" />
         </div>
       </Card>
 
@@ -79,24 +84,30 @@ export function ExplorerScreen({ onOpenService, onPublish }: ExplorerScreenProps
           value={tab}
           onChange={setTab}
           items={[
-            { value: 'all', label: 'All services', count: SERVICES.length },
-            { value: 'origin', label: 'Origin', icon: 'server', count: SERVICES.filter((s) => s.type === 'origin').length },
-            { value: 'relay', label: 'Relayed', icon: 'globe', count: SERVICES.filter((s) => s.type === 'relay').length },
+            { value: 'all', label: 'All services', count: services.length },
+            { value: 'origin', label: 'Origin', icon: 'server', count: services.filter((s) => s.type === 'origin').length },
+            { value: 'relay', label: 'Relayed', icon: 'globe', count: services.filter((s) => s.type === 'relay').length },
           ]}
         />
         <Input size="sm" icon="search" placeholder="Search services" value={q} onChange={setQ} style={{ width: 220 }} />
       </div>
 
-      {rows.length === 0 ? (
+      {state.phase === 'error' ? (
         <EmptyState
-          icon="search" title="No services match" detail="Try clearing the search or the type filter."
-          action={<Button variant="secondary" size="sm" onClick={() => { setQ(''); setTab('all'); }}>Clear filters</Button>}
+          icon="triangle-alert" title="Couldn't reach the gateway" detail={state.message}
+          action={<Button variant="secondary" size="sm" onClick={reload}>Retry</Button>}
+        />
+      ) : rows.length === 0 ? (
+        <EmptyState
+          icon="search" title={state.phase === 'loading' ? 'Loading services…' : 'No services match'}
+          detail={state.phase === 'loading' ? 'Fetching the gateway registry.' : 'Try clearing the search or the type filter.'}
+          action={state.phase === 'loading' ? undefined : <Button variant="secondary" size="sm" onClick={() => { setQ(''); setTab('all'); }}>Clear filters</Button>}
         />
       ) : (
-        <DataTable rows={rows} columns={columns} onRowClick={(r) => onOpenService(r.slug)} />
+        <DataTable rows={rows} columns={columns} onRowClick={(r) => onOpenService(r.id)} />
       )}
       <p style={{ marginTop: 'var(--space-5)', font: 'var(--fw-regular) var(--fs-caption)/1.6 var(--font-body)', color: 'var(--text-faint)' }}>
-        Public: service name, price, call volume. Hidden: every payer and every amount.
+        Public: service id, price, target host. Hidden: every payer and every amount.
       </p>
     </div>
   );

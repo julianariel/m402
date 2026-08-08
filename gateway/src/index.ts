@@ -33,4 +33,6 @@ const app = createRoutes({
 
 app.get('/healthz', (c) => c.text('ok'));
 
-serve({ fetch: app.fetch, port: config.port });
+serve({ fetch: app.fetch, port: config.port }, (info) => {
+  console.log(`gateway listening on http://localhost:${info.port} (vault ${config.vaultAddress})`);
+});

@@ -1,42 +1,120 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { PaymentRequired } from '@m402/shared';
 import { Badge, Button, Card, IconButton, StatusDot } from '../components/core';
 import { Dialog, Toast, Tooltip } from '../components/feedback';
 import { CodeBlock, FlowStep, HashChip, PriceTag } from '../components/protocol';
-import { SERVICES, type Service } from './data';
-
-/**
- * Illustrative — the real `receipts` set is on-chain but decoding it into this shape
- * needs the compiled contract wired into this screen (see contracts/src/pure.ts, added
- * upstream). The contract has no nullifier — Zswap already prevents double-spending a
- * coin, so an earlier nullifier set was removed as redundant. What's real here is the
- * UX claim: a receipt hash proves a payment happened; amount and payer never appear,
- * in mock data or in the real thing.
- */
-const RECENT_RECEIPTS = [
-  '7f3a9c1e5b8d2046af7c3e91b5d8a042f6c9e1b7a3d5f8092c4e6a1b9d3f7082',
-  '2c8e5a91d4f7b036e9a1c5d8f2b4076a3e9c1f5b8d206479a3c5e8b1d4f7902c',
-  '9b4d7f1a3c8e502691b5d9f3a7c108e4b6d9a1c3f5e802b7d4a9c1e6f3b80572',
-];
+import { claimService, listServices, requestService, type GatewayServiceRow } from '../lib/gateway';
+import { fetchVaultLedger } from '../chain/ledger';
+import { payForService } from '../chain/circuits';
+import { useWalletContext } from '../wallet/WalletContext';
+import { GATEWAY_URL } from '../chain/config';
+import { approxUsdOf, safeHostname, shortHex } from './serviceDisplay';
 
 export interface ServiceScreenProps {
-  slug: string;
+  id: string;
   onBack: () => void;
 }
 
-type PayStep = 0 | 1 | 2 | 3; // idle · proving · watching · done
+type PayPhase =
+  | { kind: 'idle' }
+  | { kind: 'connecting' }
+  | { kind: 'proving' }
+  | { kind: 'confirming' }
+  | { kind: 'claiming'; attempt: number }
+  | { kind: 'done'; status: number; contentType: string; bytes: number }
+  | { kind: 'error'; message: string };
 
-export function ServiceScreen({ slug, onBack }: ServiceScreenProps) {
-  const s: Service = SERVICES.find((x) => x.slug === slug) ?? SERVICES[0];
-  const [step, setStep] = useState<PayStep>(0);
+export function ServiceScreen({ id, onBack }: ServiceScreenProps) {
+  const wallet = useWalletContext();
+  const [row, setRow] = useState<GatewayServiceRow | null>(null);
+  const [requirements, setRequirements] = useState<PaymentRequired | null>(null);
+  const [receipts, setReceipts] = useState<string[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [phase, setPhase] = useState<PayPhase>({ kind: 'idle' });
   const [open, setOpen] = useState(false);
 
-  const run = () => {
-    setOpen(false);
-    setStep(1);
-    setTimeout(() => setStep(2), 1600);
-    setTimeout(() => setStep(3), 3200);
+  useEffect(() => {
+    let cancelled = false;
+    listServices()
+      .then((rows) => { if (!cancelled) setRow(rows.find((r) => r.id === id) ?? null); })
+      .catch(() => {});
+    requestService(id)
+      .then((res) => { if (!cancelled && res.kind === 'payment-required') setRequirements(res.requirements); })
+      .catch((err) => { if (!cancelled) setLoadError(err instanceof Error ? err.message : 'Failed to load this service.'); });
+    return () => { cancelled = true; };
+  }, [id]);
+
+  useEffect(() => {
+    if (!requirements) return;
+    let cancelled = false;
+    fetchVaultLedger(requirements.vaultAddress)
+      .catch(() => null)
+      .then((ledger) => {
+        if (cancelled || !ledger) return;
+        const hashes: string[] = [];
+        for (const r of ledger.receipts) {
+          hashes.push(Buffer.from(r).toString('hex'));
+          if (hashes.length >= 5) break;
+        }
+        setReceipts(hashes);
+      });
+    return () => { cancelled = true; };
+  }, [requirements]);
+
+  const stateFor = (i: number): 'done' | 'active' | 'pending' => {
+    const order = ['idle', 'connecting', 'proving', 'confirming', 'claiming', 'done'];
+    const current = order.indexOf(phase.kind);
+    const target = [0, 1, 2, 3][i] ?? 3;
+    if (phase.kind === 'error') return 'pending';
+    if (current > target) return 'done';
+    if (current === target) return 'active';
+    return 'pending';
   };
-  const stateFor = (i: number): 'done' | 'active' | 'pending' => (step > i ? 'done' : step === i ? 'active' : 'pending');
+
+  async function run() {
+    setOpen(false);
+    setPhase({ kind: 'connecting' });
+    try {
+      const { providers } = wallet.connected && wallet.providers ? { providers: wallet.providers } : await wallet.connect();
+      if (!requirements) throw new Error('Payment requirements not loaded yet.');
+
+      const serviceIdBytes = Buffer.from(requirements.serviceId, 'hex');
+      const { receiptSecret } = await payForService(providers, requirements.vaultAddress, serviceIdBytes, (p) =>
+        setPhase(p === 'proving' ? { kind: 'proving' } : { kind: 'confirming' }),
+      );
+
+      setPhase({ kind: 'claiming', attempt: 0 });
+      const response = await claimService(id, Buffer.from(receiptSecret).toString('hex'), (_delay, attempt) =>
+        setPhase({ kind: 'claiming', attempt }),
+      );
+      setPhase({
+        kind: 'done',
+        status: response.status,
+        contentType: response.headers.get('content-type') ?? '',
+        bytes: Number(response.headers.get('content-length') ?? '0'),
+      });
+    } catch (err) {
+      setPhase({ kind: 'error', message: err instanceof Error ? err.message : 'Payment failed.' });
+    }
+  }
+
+  const busy = phase.kind === 'connecting' || phase.kind === 'proving' || phase.kind === 'confirming' || phase.kind === 'claiming';
+  const buttonLabel =
+    phase.kind === 'connecting' ? 'Connecting wallet…'
+    : phase.kind === 'proving' ? 'Proving…'
+    : phase.kind === 'confirming' ? 'Confirming on-chain…'
+    : phase.kind === 'claiming' ? `Waiting on gateway (retry ${phase.attempt})…`
+    : phase.kind === 'done' ? 'Paid — run again'
+    : 'Pay privately';
+
+  if (loadError) {
+    return (
+      <div style={{ maxWidth: 'var(--container-lg)', margin: '0 auto', padding: '28px var(--page-pad) 80px' }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>← All services</button>
+        <p style={{ color: 'var(--state-error)' }}>{loadError}</p>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: 'var(--container-lg)', margin: '0 auto', padding: '28px var(--page-pad) 80px' }}>
@@ -51,97 +129,114 @@ export function ServiceScreen({ slug, onBack }: ServiceScreenProps) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 'var(--space-3)' }}>
-              {s.type === 'relay' ? <Badge tone="public" icon="globe">relay</Badge> : <Badge icon="server">origin</Badge>}
-              {s.chain && <Badge uppercase={false}>{s.chain}</Badge>}
-              <StatusDot tone={s.state === 'live' ? 'live' : 'confirming'} label={s.state === 'live' ? 'live' : 'confirming…'} />
+              {row?.type === 'relay' ? <Badge tone="public" icon="globe">relay</Badge> : <Badge icon="server">origin</Badge>}
+              {row?.chain && <Badge uppercase={false}>{row.chain}</Badge>}
+              <StatusDot tone="live" label="live" />
             </div>
-            <h1 style={{ margin: 0, font: 'var(--text-h1)', letterSpacing: 'var(--ls-heading)' }}>{s.name}</h1>
-            <p style={{ margin: 'var(--space-3) 0 0', maxWidth: '56ch', font: 'var(--text-body)', color: 'var(--text-secondary)' }}>{s.desc}</p>
+            <h1 style={{ margin: 0, font: 'var(--text-h1)', letterSpacing: 'var(--ls-heading)' }}>{row ? safeHostname(row.target) : shortHex(id)}</h1>
+            <p style={{ margin: 'var(--space-3) 0 0', maxWidth: '56ch', font: 'var(--text-body)', color: 'var(--text-secondary)' }}>
+              {row ? row.target : 'Loading service details from the gateway…'}
+            </p>
           </div>
 
           <Card padding="md">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
                 <span style={{ font: 'var(--fw-bold) var(--fs-mono-xs)/1 var(--font-mono)', letterSpacing: 'var(--ls-label)', textTransform: 'uppercase', color: 'var(--text-faint)' }}>m402 url</span>
-                <IconButton icon="copy" label="Copy URL" onClick={() => navigator.clipboard?.writeText(`https://gw.m402.dev/s/${s.slug}`)} />
+                <IconButton icon="copy" label="Copy URL" onClick={() => navigator.clipboard?.writeText(`${GATEWAY_URL}/s/${id}`)} />
               </div>
               <div style={{ font: 'var(--text-code)', color: 'var(--text-primary)', wordBreak: 'break-all' }}>
-                https://gw.m402.dev/s/{s.slug}
+                {GATEWAY_URL}/s/{id}
               </div>
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', paddingTop: 4 }}>
-                <HashChip label="serviceid" value={s.id} tone="public" />
-                <HashChip label="vault" value="mn_shield-addr1qxy8p3k2v9j7t4" head={12} tail={4} />
+                <HashChip label="serviceid" value={id} tone="public" />
+                {requirements && <HashChip label="vault" value={requirements.vaultAddress} tone="public" head={12} tail={4} />}
               </div>
             </div>
           </Card>
 
           <Card padding="md">
             <div style={{ font: 'var(--fw-bold) var(--fs-mono-xs)/1 var(--font-mono)', letterSpacing: 'var(--ls-label)', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 'var(--space-4)' }}>
-              recent activity
+              on-chain receipts
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-              {RECENT_RECEIPTS.map((n) => (
-                <div key={n} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                  <HashChip label="receipt" value={n} tone="public" head={8} tail={4} copyable={false} />
-                  <Tooltip content="Payer and amount are witnesses. A receipt hash proves a payment happened — never who made it or for how much.">
-                    <span><PriceTag usd="" star="" hidden /></span>
-                  </Tooltip>
-                </div>
-              ))}
-            </div>
+            {receipts.length === 0 ? (
+              <p style={{ margin: 0, font: 'var(--fw-regular) var(--fs-caption)/1.5 var(--font-body)', color: 'var(--text-faint)' }}>
+                No receipts on the vault yet.
+              </p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+                {receipts.map((r) => (
+                  <div key={r} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                    <HashChip label="receipt" value={r} tone="public" head={8} tail={4} copyable={false} />
+                    <Tooltip content="Payer and amount are witnesses. A receipt hash proves a payment happened — never who made it or for how much.">
+                      <span><PriceTag usd="" star="" hidden /></span>
+                    </Tooltip>
+                  </div>
+                ))}
+              </div>
+            )}
             <p style={{ margin: 'var(--space-4) 0 0', font: 'var(--fw-regular) var(--fs-caption)/1.5 var(--font-body)', color: 'var(--text-faint)' }}>
-              Illustrative — the real <code style={{ fontFamily: 'var(--font-mono)' }}>receipts</code> set is on-chain, but decoding it needs the compiled contract wired into this screen.
+              The vault's `receipts` set isn't scoped per service (m402Vault.compact has no such index) — these are the most recent entries on the whole vault.
             </p>
           </Card>
 
-          <CodeBlock
-            title="402 Payment Required"
-            code={`HTTP/1.1 402 Payment Required\n\n{\n  "serviceId": "${s.id.slice(0, 10)}…",\n  "price": "${s.star}",\n  "vaultAddress": "mn_shield-addr1qxy8p3k2v9…"\n}`}
-          />
-          <CodeBlock title="agent cli" code={`$ m402 call https://gw.m402.dev/s/${s.slug}`} />
+          {requirements && (
+            <CodeBlock
+              title="402 Payment Required"
+              code={`HTTP/1.1 402 Payment Required\n\n${JSON.stringify(requirements, null, 2)}`}
+            />
+          )}
+          <CodeBlock title="agent cli" code={`$ m402 call ${GATEWAY_URL}/s/${id}`} />
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
-          <Card padding="lg" accent={step === 3 ? 'private' : 'accent'}>
+          <Card padding="lg" accent={phase.kind === 'done' ? 'private' : 'accent'}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
               <div>
                 <div style={{ font: 'var(--fw-bold) var(--fs-mono-xs)/1 var(--font-mono)', letterSpacing: 'var(--ls-label)', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 'var(--space-3)' }}>asking price</div>
-                <PriceTag usd={s.usd} star={s.star} size="lg" />
+                {requirements ? <PriceTag usd={approxUsdOf({ price: BigInt(requirements.price) })} star={requirements.price} size="lg" /> : <span>Loading…</span>}
               </div>
               <div style={{ height: 1, background: 'var(--border-subtle)' }} />
               <div>
                 <FlowStep index={1} title="402 with requirements" detail="serviceId, price, vault address." state="done" privacy="public" />
-                <FlowStep index={2} title="Prove pay() locally" detail="coin.value never leaves this machine." state={stateFor(1)} privacy="private" />
-                <FlowStep index={3} title="Receipt on the indexer" detail="Verification ~3.4ms." state={stateFor(2)} privacy="public" />
-                <FlowStep index={4} title="Resource returned" state={step === 3 ? 'done' : 'pending'} last />
+                <FlowStep index={2} title="Prove pay() with Lace" detail="coin.value never leaves this machine." state={stateFor(1)} privacy="private" />
+                <FlowStep index={3} title="Receipt on the indexer" detail="Gateway retries GET /s/:id with X-Payment." state={stateFor(2)} privacy="public" />
+                <FlowStep index={4} title="Resource returned" state={phase.kind === 'done' ? 'done' : stateFor(3)} last />
               </div>
               <Button
-                variant="shield" fullWidth iconLeft={step === 3 ? 'circle-check' : 'shield-check'}
-                loading={step === 1 || step === 2}
-                onClick={() => (step === 3 ? setStep(0) : setOpen(true))}
+                variant="shield" fullWidth iconLeft={phase.kind === 'done' ? 'circle-check' : 'shield-check'}
+                loading={busy} disabled={!requirements}
+                onClick={() => (phase.kind === 'done' ? setPhase({ kind: 'idle' }) : setOpen(true))}
               >
-                {step === 1 ? 'Proving…' : step === 2 ? 'Watching indexer…' : step === 3 ? 'Paid — run again' : 'Pay privately'}
+                {buttonLabel}
               </Button>
+              {phase.kind === 'error' && (
+                <span style={{ font: 'var(--fw-regular) var(--fs-caption)/1.4 var(--font-body)', color: 'var(--state-error)' }}>{phase.message}</span>
+              )}
             </div>
           </Card>
 
           <Card padding="md" tone="inset">
             <div style={{ font: 'var(--fw-regular) var(--fs-caption)/1.6 var(--font-body)', color: 'var(--text-muted)' }}>
-              The gateway only reads the chain. It holds no funds, signs nothing, and cannot fabricate a payment.
+              The gateway only reads the chain. It holds no funds, signs nothing, and cannot fabricate a payment. Paying needs a wallet already holding m402 credit (`m402 deposit` via the agent CLI) and a proof server on :6300.
             </div>
           </Card>
         </div>
       </div>
 
-      {step === 3 && (
+      {phase.kind === 'done' && (
         <div style={{ position: 'fixed', right: 24, bottom: 24, zIndex: 50 }}>
-          <Toast tone="success" title="Resource delivered" detail={`Paid at least ${s.star} STAR. The ledger shows nothing more.`} onDismiss={() => setStep(0)} />
+          <Toast
+            tone="success" title="Resource delivered"
+            detail={`HTTP ${phase.status} · ${phase.contentType || 'unknown content-type'}${phase.bytes ? ` · ${phase.bytes} bytes` : ''}`}
+            onDismiss={() => setPhase({ kind: 'idle' })}
+          />
         </div>
       )}
 
       <Dialog
         open={open} width={440} title="Approve payment"
-        subtitle="You are proving that your credit is worth at least the asking price. The amount itself stays on this machine."
+        subtitle="Lace will prove pay() locally and submit it. The amount itself stays on this machine."
         onClose={() => setOpen(false)}
         footer={<>
           <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
@@ -150,10 +245,11 @@ export function ServiceScreen({ slug, onBack }: ServiceScreenProps) {
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', font: 'var(--text-body)' }}>
-            <span style={{ color: 'var(--text-muted)' }}>Service</span><span>{s.name}</span>
+            <span style={{ color: 'var(--text-muted)' }}>Service</span><span>{row ? safeHostname(row.target) : shortHex(id)}</span>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', font: 'var(--text-body)' }}>
-            <span style={{ color: 'var(--text-muted)' }}>Asking price</span><PriceTag usd={s.usd} star={s.star} />
+            <span style={{ color: 'var(--text-muted)' }}>Asking price</span>
+            {requirements && <PriceTag usd={approxUsdOf({ price: BigInt(requirements.price) })} star={requirements.price} />}
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', font: 'var(--text-body)' }}>
             <span style={{ color: 'var(--text-muted)' }}>Your credit spends</span><PriceTag usd="" star="" hidden />
