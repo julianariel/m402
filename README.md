@@ -37,10 +37,10 @@ vault exactly like any other merchant.
 └──────┬──────┘   2. 402 + requirements  └───────┬──────────────┘
        │                                         │
        │ 3. pay() — spends credit                │ 5. watch indexer
-       ▼                                         │    for nullifier
+       ▼                                         │    for the receipt
 ┌─────────────────────────────┐                  │
 │   m402Vault.compact         │ ◄────────────────┘
-│   nullifiers · balances     │                  │ 6. dispatch
+│   receipts · balances       │                  │ 6. dispatch
 │   pooled NIGHT reserve      │                  ▼
 └─────────────────────────────┘  ┌───────────────┴──────────────┐
        ▲                         │  origin API    │  EVM relayer│
@@ -58,7 +58,7 @@ It proves possession of a valid credit and nothing more:
 
 ```compact
 assert(coin.color == tokenType(creditDomain(), kernel.self()), "not an m402 credit");
-assert(coin.value >= price as Uint<128>, "underpaid");
+assert(coin.value == price as Uint<128>, "wrong amount");
 ```
 
 An x402 payment on Base is a transfer *from an address*. An m402 payment is a proof that

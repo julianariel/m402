@@ -142,6 +142,61 @@ the node with `1010 Invalid Transaction: Custom error: 192`
 `deploy` and `registerService` succeed without it, so the bug only appears once a circuit
 touches NIGHT.
 
+## The private-state store has two names, and only one of them is a directory
+
+`levelPrivateStateProvider` takes both, and they are not interchangeable:
+
+| Option | What it is | Default |
+|---|---|---|
+| `midnightDbName` | the **LevelDB directory on disk** | `midnight-level-db` |
+| `privateStateStoreName` | an object store *inside* that database | `private-states` |
+
+LevelDB is single-writer. Two callers that must run at the same time therefore need
+different **`midnightDbName`** values. Giving them different `privateStateStoreName` values
+changes nothing — they still open the same directory, and the second one fails:
+
+```
+Error: Database failed to open
+Caused by: IO error: lock midnight-level-db/LOCK: already held by process
+{ code: 'LEVEL_LOCKED' }
+```
+
+Two further traps, both of which kill a call **locally** before it reaches the chain:
+
+- **A fresh store is empty**, so `submitCallTx` fails with "No private state found at
+  private state ID …". Seed it: `await provider.set(id, emptyPrivateState())`.
+- **A store scopes its keys by contract address**, so it fails with "Contract address not
+  set". Call `provider.setContractAddress(contractAddress)` before seeding.
+- Passing `midnightDbName: undefined` is **not** the same as omitting it. The provider
+  merges `{ ...DEFAULT_CONFIG, ...config }`, so an explicit `undefined` overwrites the
+  default; `ClassicLevel` then receives an empty location and throws "first argument
+  'location' must be a non-empty string". Spread the key in only when it is set — see
+  `contracts/src/lib/providers.ts`.
+
+All four failures look exactly like on-chain contention, which is why the concurrency
+measurement in `deploy.test.ts` has been misread four times. Rule out the local causes
+before reading any concurrency result as a property of the chain.
+
+## One wallet cannot submit two transactions concurrently
+
+Two calls fired at the same time from a single wallet are rejected by the node:
+
+```
+1010 Invalid Transaction: Custom error: 170   // InvalidDustSpendProof
+```
+
+Both transactions build a DUST spend proof against the same wallet DUST state, and the node
+throws the second out **before contract execution**. Sequential calls from the same wallet
+in the same run all succeed, which is what isolates the cause to the sharing.
+
+The consequence for testing: contract-level write contention cannot be observed from a
+single-wallet harness at all. A low "landed" count measures the wallet, not the contract.
+Measuring the contract needs a second funded wallet.
+
+A rejected submission also never settles its promise — it waits for a confirmation that
+never comes. Wrap concurrent submissions in a timeout, or the test hangs instead of
+reporting.
+
 ## Node version
 
 The Midnight SDK's ESM exports fail to resolve on Node 23 and Node 26. **Node 22 or 24 only.**

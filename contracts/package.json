@@ -3,9 +3,32 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "files": [
+    "dist/"
+  ],
+  "exports": {
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js"
+    },
+    "./lib/config": {
+      "types": "./dist/lib/config.d.ts",
+      "import": "./dist/lib/config.js"
+    },
+    "./lib/wallet": {
+      "types": "./dist/lib/wallet.d.ts",
+      "import": "./dist/lib/wallet.js"
+    },
+    "./pure": {
+      "types": "./dist/pure.d.ts",
+      "import": "./dist/pure.js"
+    }
+  },
   "scripts": {
+    "build": "tsc && cp -R src/managed dist/",
     "compile": "compact compile src/m402Vault.compact src/managed/m402Vault",
     "deploy": "MIDNIGHT_NETWORK=preview vitest run src/test/deploy.test.ts",
+    "prepack": "npm run build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

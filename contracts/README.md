@@ -2,19 +2,81 @@
 
 `m402Vault.compact` — the payment vault.
 
-Five circuits: `registerService`, `deposit`, `pay`, `redeem`, `withdraw`, plus the pure
-`deriveServiceId`. See
+## Deployed vault — Preview
+
+**The gateway, the web app and the agent CLI must all point at this one address.** A payment
+to a different vault lands where the gateway is not watching, and the failure looks like a
+gateway bug rather than a configuration mistake.
+
+```
+M402_VAULT_ADDRESS=17b4cf15ad768fa0e5090da960e86eaf7cc885f86eb5a6b241e2fd28d98546ae
+```
+
+Deployed 2026-08-07 to Preview, in 18.0 s. Verified on chain through the indexer from a
+separate process: the contract resolves, and `servicePrice`, `serviceOwner`, `receipts` and
+`merchantBalance` are all empty with `mintCounter` at 0 — a clean vault.
+
+Its credit token colour, which the agent needs to build a coin of the right colour, is
+`ea9f46f75fc6183ced8c6a6d905b66cb3e57add5e2fe8ec928d34379a65514be`. Derive it rather than
+copying it: `pureCircuits.creditColor({ bytes: fromHex(vaultAddress) })`.
+
+Do **not** take an address out of a test run — `npm test` deploys a throwaway vault every
+time. To deploy a new persistent one:
+
+```bash
+MIDNIGHT_NETWORK=preview \
+MIDNIGHT_PREVIEW_MNEMONIC_FILE=/path/to/.mnemonic \
+npx tsx src/deploy-vault.ts
+```
+
+Five state circuits: `registerService`, `deposit`, `pay`, `redeem`, `withdraw`. See
 [`../docs/design.md`](../docs/design.md#3-contract--m402vaultcompact).
+
+Three **exported pure circuits** are the off-chain interface. They need no proof and no
+wallet, so the gateway, the web app and an auditor call them directly through
+`pureCircuits`. Never reimplement these hashes — a local copy that drifts produces an id or
+a receipt that the chain does not recognise:
+
+```
+creditColor(self: ContractAddress): Bytes<32>
+    The colour of this vault's credit. Pass the vault address. The agent needs it to build
+    a coin of the right colour before it calls pay.
+
+deriveReceipt(secret: Bytes<32>, serviceId: Bytes<32>): Bytes<32>
+    The redemption credential, and the selective-disclosure opening. The gateway hashes the
+    X-Payment secret with this and looks the result up in the `receipts` ledger Set.
+
+deriveServiceId(owner: Bytes<32>, salt: Bytes<32>, price: Uint<64>): Bytes<32>
+    The service id. `price` is part of the derivation, so a registration cannot be front-run
+    at a different price.
+```
 
 Requires the Compact toolchain and a local proof server on `:6300`.
 
 Build:
 
 ```
-compact compile src/m402Vault.compact managed/m402Vault
+npm run compile   # compact compile src/m402Vault.compact src/managed/m402Vault
 ```
 
-`managed/` is generated and gitignored.
+`managed/` is generated, and **mostly** gitignored — but not entirely. Three files are
+deliberately tracked:
+
+```
+src/managed/m402Vault/contract/index.js       tracked
+src/managed/m402Vault/contract/index.d.ts     tracked
+src/managed/m402Vault/contract/index.js.map   tracked
+src/managed/m402Vault/keys/                   ignored (~23 MB of proving keys)
+src/managed/m402Vault/zkir/                   ignored
+```
+
+The tracked three are what `contracts/pure` re-exports (`src/pure.ts`), so the
+gateway, the web app and the agent get `pureCircuits` and `ledger` **without installing the
+Compact compiler**. Do not delete them to "clean generated output" — that breaks three
+workspaces, and the break shows up as a missing import rather than as a compile error.
+
+Recompiling rewrites them. Commit the result when the contract changes, or consumers keep
+deriving ids against the old circuit.
 
 ---
 

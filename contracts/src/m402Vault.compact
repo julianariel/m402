@@ -28,7 +28,6 @@ witness receiptSecret(): Bytes<32>;
 
 export ledger servicePrice:    Map<Bytes<32>, Uint<64>>;
 export ledger serviceOwner:    Map<Bytes<32>, Bytes<32>>;
-export ledger nullifiers:      Set<Bytes<32>>;
 export ledger receipts:        Set<Bytes<32>>;
 export ledger merchantBalance: Map<Bytes<32>, Uint<64>>;
 export ledger mintCounter:     Counter;
@@ -42,18 +41,37 @@ export pure circuit creditColor(self: ContractAddress): Bytes<32> {
   return tokenType(creditDomain(), self);
 }
 
-// serviceId is derived from the owner, not chosen freely. A front-runner who copies an
-// in-flight registration and substitutes their own address necessarily produces a
-// DIFFERENT serviceId, so they cannot capture the merchant's. Exported so the gateway
-// and web app can derive the same id off-chain.
-export pure circuit deriveServiceId(owner: Bytes<32>, salt: Bytes<32>): Bytes<32> {
-  return persistentHash<Vector<3, Bytes<32>>>([pad(32, "m402:sid:v1"), owner, salt]);
+// The redemption credential, and the selective-disclosure opening. Exported and pure
+// so the gateway can verify a payment, and an auditor can verify a disclosure, with
+// no proof and no reimplementation of the hash.
+export pure circuit deriveReceipt(secret: Bytes<32>, serviceId: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>(
+    [pad(32, "m402:receipt:v1"), secret, serviceId]
+  );
+}
+
+// serviceId binds BOTH the owner and the price, because every argument of a pending
+// registration is public. Substituting either yields a different id, so a front-runner
+// can neither capture the merchant's service nor fix its price. Binding only the owner
+// left the price attack open: copy the victim's owner and salt, set price to 1, win the
+// race, and the merchant owns a service permanently priced at 1.
+// Exported and pure so the gateway and web app derive the same id off-chain.
+export pure circuit deriveServiceId(
+  owner: Bytes<32>,
+  salt: Bytes<32>,
+  price: Uint<64>
+): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>(
+    [pad(32, "m402:sid:v1"), owner, salt, price as Bytes<32>]
+  );
 }
 
 export circuit registerService(salt: Bytes<32>, price: Uint<64>, owner: Bytes<32>): [] {
   assert(price > 0, "price must be positive");
+  // A zero owner accrues a balance that withdraw burns to the zero address.
+  assert(owner != pad(32, ""), "owner must be set");
 
-  const serviceId = deriveServiceId(disclose(owner), disclose(salt));
+  const serviceId = deriveServiceId(disclose(owner), disclose(salt), disclose(price));
   // Map.insert overwrites. Both maps are guarded so neither can be replaced, and
   // registration is first-come and immutable.
   assert(!servicePrice.member(serviceId), "already registered");
@@ -94,24 +112,17 @@ export circuit pay(serviceId: Bytes<32>): [] {
   // receiveShielded does NOT constrain the colour. Without this, a self-minted
   // worthless token would buy API calls.
   assert(coin.color == tokenType(creditDomain(), kernel.self()), "not an m402 credit");
-  assert(coin.value >= price as Uint<128>, "underpaid");
-
-  // Replay guard. Defence in depth over Zswap's own double-spend prevention.
-  const nullifier = persistentHash<Vector<3, Bytes<32>>>(
-    [pad(32, "m402:nul:v1"), coin.nonce, sid]
-  );
-  assert(!nullifiers.member(disclose(nullifier)), "already spent");
+  // Not >=. pay consumes the WHOLE coin but credits only price, so an overpaying
+  // coin burns the difference — backed by NIGHT no circuit can ever release.
+  assert(coin.value == price as Uint<128>, "wrong amount");
 
   // Redemption credential. The SECRET stays with the payer and is what they present
   // to the gateway; only its hash is public, so an observer watching the chain cannot
   // steal the purchase. Doubles as the selective-disclosure opening.
-  const receipt = persistentHash<Vector<3, Bytes<32>>>(
-    [pad(32, "m402:receipt:v1"), receiptSecret(), sid]
-  );
+  const receipt = deriveReceipt(receiptSecret(), sid);
   assert(!receipts.member(disclose(receipt)), "receipt reused");
 
   receiveShielded(disclose(coin));
-  nullifiers.insert(disclose(nullifier));
   receipts.insert(disclose(receipt));
 
   const owner = serviceOwner.lookup(sid);
@@ -122,6 +133,8 @@ export circuit pay(serviceId: Bytes<32>): [] {
 // Cash unspent credit back to NIGHT. Holding the coin IS the authorisation — Zswap
 // validates the spend — so the caller may name any destination for their own funds.
 export circuit redeem(recipient: Bytes<32>): [] {
+  assert(recipient != pad(32, ""), "recipient must be set");
+
   const coin = redeemCoin();
   assert(coin.color == tokenType(creditDomain(), kernel.self()), "not an m402 credit");
   assert(coin.value > 0, "nothing to redeem");

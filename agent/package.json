@@ -4,15 +4,20 @@
   "private": true,
   "type": "module",
   "bin": {
-    "m402": "./src/index.ts"
+    "m402": "./dist/index.js"
   },
   "scripts": {
+    "build": "tsc",
+    "predev": "npm run build --workspace=contracts",
     "dev": "tsx src/index.ts",
+    "pretest": "npm run build --workspace=contracts",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@m402/shared": "*"
+    "@m402/shared": "*",
+    "@midnight-ntwrk/midnight-js-utils": "4.1.1",
+    "contracts": "*"
   },
   "devDependencies": {
     "tsx": "^4.19.1",

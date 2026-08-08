@@ -2,7 +2,10 @@
 // across three people. Import these, never redeclare them — see ../../docs/stack.md.
 
 export type Service = {
-  id: string;   // deriveServiceId(owner, salt) — derived, never freely chosen
+  // deriveServiceId(owner, salt, price) — derived, never freely chosen. `price` is part
+  // of the derivation: change it and the id changes, so a registration cannot be
+  // front-run at a different price. Use the exported pure circuit, never a local hash.
+  id: string;
   price: bigint;
   owner: string; // merchant's unshielded Lace address bytes, hex
   type: 'origin' | 'relay';
@@ -17,12 +20,16 @@ export type PaymentRequired = {
 };
 
 /**
- * Payment header. The value is the payer's **receipt secret**, hex — NOT the nullifier.
+ * Payment header. The value is the payer's **receipt secret**, hex — never the hash.
  *
- * The nullifier is written to a public ledger Set. If it were the credential, anyone
- * watching the indexer could see one land and claim the resource before the honest agent
- * retried, then replay it forever. Only `hash("m402:receipt:v1", secret, serviceId)` is
- * published, so holding the secret is what proves the purchase.
+ * The receipt HASH is written to the public `receipts` ledger Set. If the hash were the
+ * credential, anyone watching the indexer could see one land and claim the resource before
+ * the honest agent retried, then replay it forever. Only
+ * `deriveReceipt(secret, serviceId)` is published, so holding the secret is what proves the
+ * purchase.
+ *
+ * The contract has **no nullifier**. Zswap already prevents spending a coin twice, so the
+ * earlier nullifier set guarded nothing and was removed. Do not reintroduce the term here.
  *
  * The gateway must ALSO track consumed secrets locally: the on-chain set proves a payment
  * happened, not that it is still unspent.

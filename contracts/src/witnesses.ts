@@ -100,7 +100,14 @@ export const redeemCoin = (
     throw new Error('redeemCoin: set pendingRedeem to the amount to cash out before calling redeem().');
   }
   const color = pureCircuits.creditColor({ bytes: fromHex(ctx.contractAddress) });
-  return [ctx.privateState, encodeShieldedCoinInfo(createShieldedCoinInfo(toHex(color), amount))];
+
+  // Clear it. Private state is persisted only on success, so a failed redeem keeps the
+  // amount and can be retried — but a SUCCEEDED one must not leave it set, or a retry
+  // after an apparent timeout cashes out a second time with no error.
+  return [
+    { ...ctx.privateState, pendingRedeem: undefined },
+    encodeShieldedCoinInfo(createShieldedCoinInfo(toHex(color), amount)),
+  ];
 };
 
 /**

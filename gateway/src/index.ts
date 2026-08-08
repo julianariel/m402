@@ -1,10 +1,36 @@
 import { serve } from '@hono/node-server';
-import { Hono } from 'hono';
+import { createRoutes } from './routes.js';
+import { createRegistry } from './registry.js';
+import { createConsumedReceipts } from './consumed.js';
+import { deriveReceipt } from './receipt.js';
+import { createVerifier, createPublicDataSubscribe } from './verify.js';
+import { createOwnershipChecker } from './ownership.js';
+import { dispatchOrigin, createDispatch, createRelayDispatcher } from './dispatch.js';
+import { createHealthProbe } from './health.js';
+import { config } from './config.js';
 
-// Route handlers land in #6 (resolve /s/:id) and #7 (nullifier verification).
-const app = new Hono();
+const registry = createRegistry(config.dbPath);
+const consumedReceipts = createConsumedReceipts(config.dbPath);
+const verify = createVerifier(
+  createPublicDataSubscribe(config.indexerUrl, config.indexerWsUrl),
+  config.vaultAddress,
+  deriveReceipt,
+  consumedReceipts,
+  () => registry.list().map((s) => s.id)
+);
+const checkOwnership = createOwnershipChecker(config.indexerUrl, config.indexerWsUrl, config.vaultAddress);
+const dispatch = createDispatch(dispatchOrigin, createRelayDispatcher(config.relayerKeyFile));
+
+const app = createRoutes({
+  registry,
+  vaultAddress: config.vaultAddress,
+  verifyTimeoutMs: config.verifyTimeoutMs,
+  verify,
+  probeOrigin: createHealthProbe(),
+  checkOwnership,
+  dispatch,
+});
 
 app.get('/healthz', (c) => c.text('ok'));
 
-const port = Number(process.env.PORT ?? 8787);
-serve({ fetch: app.fetch, port });
+serve({ fetch: app.fetch, port: config.port });

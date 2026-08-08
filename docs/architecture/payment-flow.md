@@ -100,10 +100,9 @@ sequenceDiagram
     Note over A: prove pay() locally — ~19s<br/>no address goes into this transaction
     A->>V: submit pay() tx
     V->>V: assert colour == m402 credit
-    V->>V: assert value >= price
-    V->>V: nullifier = hash(domain, coin.nonce, serviceId)
-    V->>V: receipt = hash(domain, receiptSecret, serviceId)
-    V->>V: assert both unseen, then insert
+    V->>V: assert value == price
+    V->>V: receipt = deriveReceipt(receiptSecret, serviceId)
+    V->>V: assert receipt unseen, then insert
     V->>V: merchantBalance += price
 
     A->>G: GET /s/:id + X-Payment: receiptSecret
@@ -117,9 +116,16 @@ sequenceDiagram
 
 Two things here are not optional. The **colour assert** — `receiveShielded` does not check
 what token it receives, so without it any minted token would buy API calls. And the
-**receipt**: the nullifier is public, so if it were the redemption credential, anyone
-watching the indexer could claim the resource first. Only the hash of the secret is
-published.
+**receipt**: only `deriveReceipt(secret, serviceId)` is published, so an observer watching
+the indexer cannot lift a redemption credential off the chain.
+
+The amount is `==`, not `>=`. `pay` consumes the whole coin but credits only `price`, so an
+overpaying coin would burn the difference.
+
+The gateway checks one more thing the diagram omits: before dispatching, it also checks the
+hash against a **local** consumed-receipts table. `receipts` is append-only — it proves a
+payment happened, never that this particular access grant is still unspent — so that second
+check is the gateway's own replay guard, not something the chain can enforce for it.
 
 ## Payment — relayed x402 service
 
@@ -133,7 +139,7 @@ sequenceDiagram
     participant R as Relayer
     participant X as x402 service (EVM)
 
-    Note over A,G: 402 → pay() → nullifier confirmed<br/>(as above)
+    Note over A,G: 402 → pay() → receipt confirmed<br/>(as above)
 
     G->>R: dispatch, type = "relay"
     R->>X: GET resource
@@ -157,22 +163,41 @@ sequenceDiagram
 
     M->>W: URL + price in USD
     W->>W: salt = 32 random bytes
-    W->>W: serviceId = deriveServiceId(owner, salt)
     W->>W: convert USD → STAR (fixed rate)
+    W->>W: serviceId = deriveServiceId(owner, salt, price)
     W->>L: request signature
     L->>M: approve
     L->>V: registerService(salt, price, owner)
-    V->>V: serviceId = hash(domain, owner, salt)
+    V->>V: serviceId = hash(domain, owner, salt, price)
     V->>V: assert not already registered
-    W->>GW: store serviceId → URL
-    W-->>M: m402 URL (confirming…)
-    Note over W,V: flips to "live" once the indexer sees it
+    W->>GW: POST /services { id, price, owner, target }
+    GW->>V: queryContractState — read serviceOwner[id]
+    alt not yet visible on-chain
+      GW-->>W: 503 registration-not-yet-confirmed — retry
+    else owner mismatch
+      GW-->>W: 403 owner-mismatch
+    else confirmed match
+      GW->>GW: store serviceId → URL
+      GW-->>W: 201
+    end
+    W-->>M: m402 URL
 ```
 
 `owner` is the merchant's unshielded Lace address — it is the payout destination, so no
 merchant secret exists. Deriving `serviceId` from `owner` is what defeats front-running: an
 observer who copies this transaction and substitutes their own address produces a *different*
 id and cannot capture the merchant's.
+
+`price` is bound into the id for the same reason, so the conversion to STAR must happen
+**before** the id is derived. Every argument of a pending registration is public. While the
+id bound only the owner, an observer could copy the owner and salt, set `price` to 1, and win
+the race — leaving the merchant with a service permanently priced at 1.
+
+The gateway's registry entry is not optimistic. `POST /services` is a separate, off-chain call
+— the contract never stores a URL — and the gateway does not take its body on faith: it reads
+`serviceOwner[id]` back from the chain first and only stores the mapping once that matches.
+There is no unconfirmed "confirming…" state to badge; the web UI retries the `503` until the
+`registerService` transaction has actually landed.
 
 ## Withdrawal
 
@@ -229,7 +254,7 @@ flowchart TB
     end
 
     subgraph chain["Midnight ledger — public"]
-        nullifier["nullifier"]
+        receipt["receipt hash"]
         price["price"]
         volume["merchant volume"]
         reserve["pooled NIGHT reserve"]
@@ -243,8 +268,8 @@ flowchart TB
     who --> prover
     nonce --> prover
     secret --> prover
-    prover --> nullifier
-    price --> nullifier
+    prover --> receipt
+    price --> receipt
 ```
 
 **No address appears in a payment.** `pay` takes no payer argument and reads no caller

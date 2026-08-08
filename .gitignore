@@ -26,6 +26,7 @@ managed/
 # Test and run output
 logs/
 *.log
+agent/.state/
 
 # Encrypted private-state store. Holds contract private state — nonce seeds and
 # receipt secrets — and the dev password lives in source, so treat it as plaintext.

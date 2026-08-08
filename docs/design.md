@@ -27,6 +27,13 @@ proves possession of a valid credit coin and nothing else. No address appears in
 transaction, and two payments by the same agent cannot be linked to each other. This is the
 property x402 on a transparent chain cannot have, and it is the whole point.
 
+This is checked, not only argued. `puts no payer identity into a pay transaction` in
+`deploy.test.ts` captures a real `pay` transaction at `balanceTx` and asserts that no intent
+carries an unshielded offer or a DUST registration — either would bind the agent's public
+NIGHT address to the payment. Both are reachable without a code change: a fee shortfall can
+pull an unshielded UTXO into balancing, and a first-time DUST registration rides along.
+Neither is loud, so the test is what keeps the claim true.
+
 **Public — everything about the trade.** The service, its price, the merchant, the timing,
 and a `merchantBalance` increment of exactly `price`. Deposits and redemptions are public in
 both amount and address.
@@ -58,29 +65,34 @@ Step 0 is a one-time top-up, not part of the per-call path — it costs a proof,
 amortised over every call the deposit funds. Steps 1–7 are the per-call loop.
 
 The agent submits its own transaction. The gateway only reads the chain: it holds no funds,
-signs nothing, and cannot fabricate a payment. Step 5 is a GraphQL-WS subscription against
-the indexer.
+signs nothing, and cannot fabricate a payment. Step 5 subscribes to the vault's contract state
+through the Midnight SDK's `PublicDataProvider` (`contractStateObservable`) and checks
+`ledger(state.data).receipts.member(...)` on every emission — a typed SDK entry point, not a
+hand-rolled GraphQL query against a guessed schema.
 
-**Step 4 sends the receipt *secret*, never the nullifier.** The nullifier is public on-chain;
-anyone subscribed to the indexer could see one land and redeem the purchase before the honest
-agent retried. Only the hash of the secret is published, so possession of the secret is what
-proves the purchase. The gateway must also record consumed secrets locally — the on-chain set
-proves a payment happened, not that it is unspent.
+**Step 4 sends the receipt *secret*, never anything read off the chain.** Only
+`deriveReceipt(secret, serviceId)` is published, so possession of the secret is what proves
+the purchase. The gateway must also record consumed secrets locally — the on-chain set proves
+a payment happened, never that it is still unspent. It also checks the secret's hash against
+every *other* registered service's derived receipt, so a secret that paid for the wrong
+service is reported as such rather than degrading into an indistinguishable timeout.
 
 Diagrams for each step: [`architecture/payment-flow.md`](architecture/payment-flow.md).
 
 ## 3. Contract — `m402Vault.compact`
 
-Five circuits: `registerService`, `deposit`, `pay`, `redeem`, `withdraw`, plus the pure
-`deriveServiceId`. All compile against compact 0.31.1; the confirmed stdlib API and the
-witness requirements are in [`../contracts/README.md`](../contracts/README.md).
+Five state circuits: `registerService`, `deposit`, `pay`, `redeem`, `withdraw`, plus three
+**exported pure circuits** — `creditColor`, `deriveReceipt` and `deriveServiceId` — which
+form the off-chain interface. They need no proof and no wallet, so the gateway, the web app
+and an auditor call them through `pureCircuits` rather than reimplementing the hashes. Their
+signatures are in [`../contracts/README.md`](../contracts/README.md), which also holds the
+confirmed stdlib API and the witness requirements. All compile against compact 0.31.1.
 
 ### Ledger state (public)
 
 ```compact
 export ledger servicePrice:    Map<Bytes<32>, Uint<64>>;  // serviceId -> price in STAR
 export ledger serviceOwner:    Map<Bytes<32>, Bytes<32>>; // serviceId -> merchant UserAddress
-export ledger nullifiers:      Set<Bytes<32>>;            // replay guard
 export ledger receipts:        Set<Bytes<32>>;            // hashed redemption credentials
 export ledger merchantBalance: Map<Bytes<32>, Uint<64>>;  // claimable
 export ledger mintCounter:     Counter;                   // deposit nonce index
@@ -92,13 +104,19 @@ No coin appears in ledger state. A `QualifiedShieldedCoinInfo` in a ledger cell 
 ### `registerService(salt, price, owner)`
 
 ```compact
-export pure circuit deriveServiceId(owner: Bytes<32>, salt: Bytes<32>): Bytes<32> {
-  return persistentHash<Vector<3, Bytes<32>>>([pad(32, "m402:sid:v1"), owner, salt]);
+export pure circuit deriveServiceId(
+  owner: Bytes<32>,
+  salt: Bytes<32>,
+  price: Uint<64>
+): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>(
+    [pad(32, "m402:sid:v1"), owner, salt, price as Bytes<32>]
+  );
 }
 
 export circuit registerService(salt: Bytes<32>, price: Uint<64>, owner: Bytes<32>): [] {
   assert(price > 0, "price must be positive");
-  const serviceId = deriveServiceId(disclose(owner), disclose(salt));
+  const serviceId = deriveServiceId(disclose(owner), disclose(salt), disclose(price));
   assert(!servicePrice.member(serviceId), "already registered");
   assert(!serviceOwner.member(serviceId), "already registered");
   servicePrice.insert(serviceId, disclose(price));
@@ -106,14 +124,20 @@ export circuit registerService(salt: Bytes<32>, price: Uint<64>, owner: Bytes<32
 }
 ```
 
-**`serviceId` is derived from the owner, not chosen freely.** A free `serviceId` is
-front-runnable: an observer copies an in-flight registration, substitutes their own `owner`,
-wins the race, and — because registration is immutable — permanently collects that service's
-revenue. Deriving the id from `owner` means a substituted address produces a *different* id
-and cannot collide. Both maps are guarded, so neither can be replaced independently.
+**`serviceId` is derived from the owner and the price, not chosen freely.** A free
+`serviceId` is front-runnable: an observer copies an in-flight registration, substitutes
+their own `owner`, wins the race, and — because registration is immutable — permanently
+collects that service's revenue. Deriving the id from `owner` means a substituted address
+produces a *different* id and cannot collide. Both maps are guarded, so neither can be
+replaced independently.
+
+**`price` is bound for the same reason.** Every argument of a pending registration is public.
+While the id bound only the owner, a front-runner could copy the victim's `owner` and `salt`,
+set `price` to 1, and win the race — leaving the merchant with a service permanently priced
+at 1. Binding `price` into the id closes that path: a substituted price yields a different id.
 
 `deriveServiceId` is `pure`, so the gateway and web app compute the same id off-chain with no
-proof. `owner` is the merchant's unshielded Lace address, used directly as the payout
+proof. All three inputs are needed, `price` included. `owner` is the merchant's unshielded Lace address, used directly as the payout
 destination.
 
 ### `deposit(amount)`
@@ -154,20 +178,14 @@ export circuit pay(serviceId: Bytes<32>): [] {
 
   const coin = creditCoin(sid, price);
   assert(coin.color == tokenType(creditDomain(), kernel.self()), "not an m402 credit");
-  assert(coin.value >= price as Uint<128>, "underpaid");
+  // Not >=. pay consumes the WHOLE coin but credits only price, so an overpaying
+  // coin burns the difference into NIGHT no circuit can release.
+  assert(coin.value == price as Uint<128>, "wrong amount");
 
-  const nullifier = persistentHash<Vector<3, Bytes<32>>>(
-    [pad(32, "m402:nul:v1"), coin.nonce, sid]
-  );
-  assert(!nullifiers.member(disclose(nullifier)), "already spent");
-
-  const receipt = persistentHash<Vector<3, Bytes<32>>>(
-    [pad(32, "m402:receipt:v1"), receiptSecret(), sid]
-  );
+  const receipt = deriveReceipt(receiptSecret(), sid);
   assert(!receipts.member(disclose(receipt)), "receipt reused");
 
   receiveShielded(disclose(coin));
-  nullifiers.insert(disclose(nullifier));
   receipts.insert(disclose(receipt));
 
   const owner = serviceOwner.lookup(sid);
@@ -182,11 +200,17 @@ Three things here are load-bearing.
 an attacker mints their own worthless shielded token and buys API calls with it. Contract
 token colours are collision-resistant, so only this vault can mint that colour.
 
-**The receipt, and why it is not the nullifier.** The nullifier is written to a public set.
-If it were also the redemption credential, anyone watching the indexer could see one land and
-claim the resource before the honest agent retried — and replay it forever. The receipt
-publishes only `hash(domain, secret, serviceId)`; the payer keeps the secret and presents it
-to the gateway.
+**The receipt is the credential, and only its hash is public.** `receipts` holds
+`deriveReceipt(secret, serviceId)`; the payer keeps the secret and presents it to the
+gateway. Publishing the credential itself would let anyone watching the indexer claim the
+resource before the honest agent retried, and replay it forever.
+
+**There is no nullifier.** An earlier version kept one as a replay guard. Zswap already
+prevents spending the same coin twice, so it guarded nothing, cost a set write in the
+hottest circuit, grew without bound, and could reject an honest payment on a nonce
+collision. Its only secret input was a coin nonce, which is public for a deposit-minted
+coin — a future `creditCoin` that reused such a coin would have made every payment
+recomputable from public data, silently.
 
 **`creditCoin` is parameterised.** `pay` consumes the whole coin, so the wallet must supply
 one worth exactly `price`. A zero-argument witness could not know the price and would return
@@ -251,10 +275,13 @@ auditor, the payer hands over that payment's secret; the auditor recomputes the 
 checks membership on the public ledger. It proves *this payment, to this service, by me* and
 reveals nothing about any other payment.
 
-The nullifier is deliberately **not** a commitment to the amount. It is a hash, not a hiding
-commitment, and its only secret input is a coin nonce chosen for a different purpose —
-handing that to an auditor would leak Zswap-level material. Since the amount equals the
-public `price` anyway, there is nothing to disclose about it.
+`deriveReceipt` is exported and pure, so an auditor verifies an opening with no proof and no
+reimplementation of the hash:
+
+```ts
+const opening = pureCircuits.deriveReceipt(secret, serviceId);
+const proven  = ledger(state.data).receipts.member(opening);
+```
 
 ### Solvency
 
@@ -295,14 +322,29 @@ USDC.
 ## 5. Gateway
 
 ```
-1. resolve serviceId from /s/:id
-2. no X-Payment?  → 402 { serviceId, price, vaultAddress }
-3. X-Payment?     → hash the secret, check the on-chain receipts set,
-                    then check it against the locally-consumed set
+1. resolve serviceId from /s/:id — unknown → 404
+2. no X-Payment?  → origin service: health-check first, unreachable → 503
+                  → 402 { serviceId, price, vaultAddress }
+3. X-Payment?     → hash the secret via deriveReceipt(secret, serviceId),
+                    check the on-chain receipts set, then the locally-consumed set
+                    → confirmed     → continue to 4
+                    → replayed      → 402 { reason: 'receipt-already-used' }
+                    → wrong-service → 402 (payment body — secret paid a different service)
+                    → timeout       → 503 { reason: 'payment-pending' }, Retry-After
 4. dispatch on service.type:
      "origin" → HTTP proxy to merchant's URL
      "relay"  → x402 client → pay USDC → fetch
 5. return the response body verbatim
+```
+
+`POST /services` registers a service in the gateway's own registry — a plain HTTP write, not
+something synced automatically from the chain. Before accepting one, the gateway reads
+`serviceOwner[id]` from the chain and compares it to the claimed `owner`:
+
+```
+not yet visible on-chain → 503 { reason: 'registration-not-yet-confirmed' }  (retryable)
+owner mismatch           → 403 { reason: 'owner-mismatch' }                  (not retryable)
+match                    → inserted
 ```
 
 Registry row, covering both paths:
@@ -331,15 +373,21 @@ address bytes, which `sendUnshielded` takes directly as a `UserAddress`. There i
 secret and nothing to save: `withdraw` pays the address recorded at registration, so identity
 never has to be proven.
 
-`serviceId` is 32 random bytes generated in the publish form. On-chain it is only a key; the
-URL lives in the gateway's registry. Registration is first-come and immutable — `Map.insert`
+`serviceId` is derived (`deriveServiceId(owner, salt, price)`, §3), not chosen freely — `salt`
+is the 32 random bytes generated in the publish form. On-chain the id is only a key; the URL
+lives in the gateway's registry. Registration is first-come and immutable — `Map.insert`
 overwrites, so without that guard anyone could re-register a `serviceId` with themselves as
 owner and redirect the merchant's revenue.
 
 A dev CLI registers services directly from a headless wallet, for testing and automation.
 
-`registerService` costs a proof. Registration UI is optimistic: return the URL immediately,
-badge it `confirming…`, flip to `live` when the indexer sees it.
+`registerService` costs a proof, and `POST /services` to the gateway's own registry is a
+**separate** call the web UI makes after it — the contract never stores the URL. The gateway
+does not accept that call on faith: it reads `serviceOwner[id]` from the chain and rejects
+with `503` if the registration isn't visible yet (retry once it lands), or `403` if the
+claimed owner doesn't match what's on-chain. This replaces an earlier "optimistic, confirming
+→ live" UI plan — the gateway registry entry only exists once the chain has already confirmed
+it, so there is no unconfirmed intermediate state to badge.
 
 The explorer lists native and relayed services together, with relayed entries badged by
 chain. Public: service name, price, call volume. Hidden: every payer and every amount.
@@ -352,7 +400,7 @@ A CLI wrapping two commands.
 coin. Run once per top-up. Losing the coin loses the deposit — there is no redeem path.
 
 `m402 call <url>` is the per-call loop: handle the 402, build and prove the payment, submit,
-retry with the nullifier, return the resource. It reports proof-generation and verification
+retry with the receipt secret, return the resource. It reports proof-generation and verification
 timings separately, since they differ by four orders of magnitude, and it labels deposit cost
 distinctly so a one-off top-up is not mistaken for per-call latency.
 
@@ -362,10 +410,11 @@ distinctly so a one-off top-up is not mistaken for per-call latency.
 |---|---|
 | Agent underpays | `assert` fails, transaction rejected, nothing spent |
 | Agent over-funds and stops | `redeem` returns the unspent credit as NIGHT |
-| Observer copies a nullifier from the chain | Useless — redemption needs the receipt secret, which is never published |
+| Observer copies a receipt hash from the chain | Useless — redemption needs the secret, which is never published |
+| Agent pays more than the price | Rejected — `coin.value == price`, so an overpaying coin cannot burn the difference |
+| Two payments submitted concurrently | One fails. Writes to a contract conflict contract-wide; see [roadmap](roadmap.md#known-limitations) |
 | Registration front-run | `serviceId` is derived from `owner`, so a substituted address yields a different id |
 | Agent pays with a foreign token | Colour assert fails — only vault-minted credits are accepted |
-| Nullifier replayed | Rejected on-chain — one payment cannot buy two calls |
 | `serviceId` re-registered | Rejected on-chain — registration is first-come and immutable |
 | Agent loses its credit coin | Unrecoverable — `redeem` needs the coin |
 | Deposit tx lacks the NIGHT input | `receiveUnshielded` fails at submit — nothing minted |

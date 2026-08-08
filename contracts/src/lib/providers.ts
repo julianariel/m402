@@ -15,16 +15,28 @@ export type VaultCircuits =
 
 export type VaultProviders = MidnightProviders<any>;
 
+export type ProviderStorageOptions = {
+    privateStateStoreName?: string;
+    midnightDbName?: string;
+};
+
 export function buildProviders(
     wallet: MidnightWalletProvider,
     zkConfigPath: string,
     config: NetworkConfig,
+    storage: ProviderStorageOptions = {},
 ): VaultProviders {
     const zkConfigProvider = new NodeZkConfigProvider<VaultCircuits>(zkConfigPath);
 
     return {
         privateStateProvider: levelPrivateStateProvider({
-            privateStateStoreName: `m402-${Date.now()}`,
+            privateStateStoreName: storage.privateStateStoreName ?? `m402-${Date.now()}`,
+            // Spread it in only when set. levelPrivateStateProvider merges with
+            // { ...DEFAULT_CONFIG, ...config }, and an explicit `undefined` OVERWRITES
+            // the default rather than falling back to it — ClassicLevel then gets an
+            // empty location and throws "first argument 'location' must be a non-empty
+            // string" at deploy time.
+            ...(storage.midnightDbName ? { midnightDbName: storage.midnightDbName } : {}),
             privateStoragePasswordProvider: () => process.env['M402_PRIVATE_STATE_PASSWORD'] ?? 'm402-dev-local-private-state',
             accountId: wallet.getCoinPublicKey(),
         }),

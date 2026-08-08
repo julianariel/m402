@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { CompiledContract } from '@midnight-ntwrk/midnight-js-protocol/compact-js';
 import { randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { WebSocket } from 'ws';
 import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import {
@@ -19,7 +22,7 @@ import { getConfig } from '../lib/config.js';
 import { MidnightWalletProvider, syncWallet, type WalletSecret } from '../lib/wallet.js';
 import { buildProviders, type VaultProviders } from '../lib/providers.js';
 import { CompiledM402Vault, Contract, ledger, pureCircuits, zkConfigPath } from '../contract.js';
-import { emptyPrivateState } from '../witnesses.js';
+import { emptyPrivateState, witnesses } from '../witnesses.js';
 
 // Required for GraphQL subscriptions in Node.
 // @ts-expect-error WebSocket global assignment for apollo
@@ -35,6 +38,21 @@ const logger = pino({
 
 const network = process.env['MIDNIGHT_NETWORK'] ?? 'local';
 const nativeTokenHex = nativeToken().raw;
+
+/**
+ * Throwaway LevelDB directories for tests that need a caller with its own database.
+ * Outside the repo, so a generated store can never be swept into a commit — that has
+ * happened twice, and the store holds nonce seeds and receipt secrets.
+ */
+const dbRoot = mkdtempSync(join(tmpdir(), 'm402-test-'));
+
+/**
+ * How many payments have landed. The credit, merchant-balance and solvency assertions
+ * are all derived from this rather than from a literal 2. Adding a test that pays — the
+ * anonymity test did exactly that — used to break three later assertions that had the
+ * payment count written into them.
+ */
+let paysMade = 0n;
 
 /** Timings collected across the run, printed as one table at the end (#5). */
 const timings: { circuit: string; ms: number }[] = [];
@@ -199,13 +217,12 @@ describe(`m402Vault (${network})`, () => {
 
     const state = await readLedger();
     expect(state.servicePrice.isEmpty()).toBe(true);
-    expect(state.nullifiers.isEmpty()).toBe(true);
     expect(state.receipts.isEmpty()).toBe(true);
   }, 10 * 60_000);
 
   it('registers a service under an id derived from the owner', async () => {
     // deriveServiceId is pure — the gateway and web app get the same id with no proof.
-    serviceId = pureCircuits.deriveServiceId(merchantOwner, salt);
+    serviceId = pureCircuits.deriveServiceId(merchantOwner, salt, PRICE);
 
     await timed('registerService', () =>
       (submitCallTx<Contract, 'registerService'>)(providers, {
@@ -223,11 +240,23 @@ describe(`m402Vault (${network})`, () => {
     expect(state.serviceOwner.lookup(serviceId)).toEqual(merchantOwner);
   }, 10 * 60_000);
 
-  it('rejects a front-run: a different owner with the same salt gets a different id', async () => {
+  it('resists front-running on both owner and price', async () => {
+    // Substituted owner: the original fix.
     const attacker = new Uint8Array(randomBytes(32));
-    const attackerId = pureCircuits.deriveServiceId(attacker, salt);
-    // The whole point of deriving the id from the owner.
-    expect(Buffer.from(attackerId).equals(Buffer.from(serviceId))).toBe(false);
+    expect(
+      Buffer.from(pureCircuits.deriveServiceId(attacker, salt, PRICE)).equals(
+        Buffer.from(serviceId),
+      ),
+    ).toBe(false);
+
+    // Substituted PRICE, keeping the victim's owner and salt. This is the attack the
+    // owner-only derivation left open: land first at price 1 and the merchant owns a
+    // service permanently priced at 1, because registration is immutable.
+    expect(
+      Buffer.from(pureCircuits.deriveServiceId(merchantOwner, salt, 1n)).equals(
+        Buffer.from(serviceId),
+      ),
+    ).toBe(false);
   });
 
   it('deposits NIGHT and receives shielded credit', async () => {
@@ -262,25 +291,31 @@ describe(`m402Vault (${network})`, () => {
       }),
     );
 
+    paysMade += 1n;
     const state = await readLedger();
 
-    // One nullifier and one receipt, and the merchant credited the PUBLIC price —
-    // not whatever the coin was worth.
-    expect(state.nullifiers.size()).toEqual(1n);
-    expect(state.receipts.size()).toEqual(1n);
-    expect(state.merchantBalance.lookup(merchantOwner)).toEqual(PRICE);
+    // One receipt, and the merchant credited the PUBLIC price.
+    expect(state.receipts.size()).toEqual(paysMade);
+    expect(state.merchantBalance.lookup(merchantOwner)).toEqual(PRICE * paysMade);
 
-    // The receipt on-chain is a hash. The secret that opens it never left the
-    // agent, which is what stops an indexer subscriber stealing the purchase.
     const secret = (await providers.privateStateProvider.get(PRIVATE_STATE_ID))
       ?.lastReceiptSecret;
     expect(secret).toBeInstanceOf(Uint8Array);
+
+    // THE property selective disclosure depends on: the retained secret actually
+    // opens the on-chain receipt. Asserting only that the raw secret is absent from
+    // the set passes vacuously, even if the secret is unrelated to the receipt.
+    const opening = pureCircuits.deriveReceipt(secret as Uint8Array, serviceId);
+    expect(state.receipts.member(opening)).toBe(true);
+
+    // And the secret itself is not what is published, so an indexer subscriber
+    // cannot lift a redemption credential off the chain.
     expect(state.receipts.member(secret as Uint8Array)).toBe(false);
   }, 10 * 60_000);
 
   it('rejects replaying the same payment', async () => {
     // A second pay() reuses neither coin nor secret, so it must succeed; the
-    // replay guard is exercised by the nullifier set growing rather than colliding.
+    // replay guard is exercised by the receipt set growing rather than colliding.
     await timed('pay (second)', () =>
       (submitCallTx<Contract, 'pay'>)(providers, {
         compiledContract: CompiledM402Vault,
@@ -291,9 +326,68 @@ describe(`m402Vault (${network})`, () => {
       }),
     );
 
+    paysMade += 1n;
     const state = await readLedger();
-    expect(state.nullifiers.size()).toEqual(2n);
-    expect(state.merchantBalance.lookup(merchantOwner)).toEqual(PRICE * 2n);
+    expect(state.receipts.size()).toEqual(paysMade);
+    expect(state.merchantBalance.lookup(merchantOwner)).toEqual(PRICE * paysMade);
+  }, 10 * 60_000);
+
+  it('puts no payer identity into a pay transaction', async () => {
+    // The privacy claim, tested directly rather than inferred. `pay` must carry no
+    // unshielded offer (whose inputs are signed by the agent's NIGHT key) and no DUST
+    // registration (which is also signed with it). Either would bind the agent's public
+    // address to the payment and collapse the anonymity claim for that transaction.
+    //
+    // Both are reachable without any code change: a fee shortfall can pull an unshielded
+    // UTXO into balancing, and a first-time DUST registration rides along in intent 1.
+    // Neither is loud, so this is the regression test that makes the claim checkable.
+    let captured: unknown;
+    const spy = Object.create(wallet) as typeof wallet;
+    spy.balanceTx = async (tx, ttl) => {
+      const out = await wallet.balanceTx(tx, ttl);
+      captured = out;
+      return out;
+    };
+
+    // A fresh store is EMPTY, and its keys are scoped by contract address. Both must be
+    // handled or the call dies locally and never reaches the chain:
+    //   - no setContractAddress → "Contract address not set"
+    //   - no seeded state       → "No private state found at private state ID ..."
+    const spied = buildProviders(spy, zkConfigPath, config, {
+      privateStateStoreName: `m402-privacy-${Date.now()}`,
+    });
+    spied.privateStateProvider.setContractAddress(contractAddress);
+    await spied.privateStateProvider.set(PRIVATE_STATE_ID, emptyPrivateState());
+
+    await (submitCallTx as never as (p: unknown, o: unknown) => Promise<unknown>)(spied, {
+      compiledContract: CompiledM402Vault,
+      contractAddress,
+      privateStateId: PRIVATE_STATE_ID,
+      circuitId: 'pay',
+      args: [serviceId],
+    });
+
+    // This is a REAL payment, not a dry run. It moves PRICE from the agent's credit to
+    // the merchant's balance, so every later balance assertion must count it.
+    paysMade += 1n;
+
+    const tx = captured as { intents?: Map<number, {
+      guaranteedUnshieldedOffer?: unknown;
+      fallibleUnshieldedOffer?: unknown;
+      dustActions?: { registrations?: unknown[] };
+    }> };
+    expect(tx.intents).toBeDefined();
+
+    for (const [i, intent] of tx.intents!) {
+      expect(intent.guaranteedUnshieldedOffer, `intent ${i} carries an unshielded offer`)
+        .toBeFalsy();
+      expect(intent.fallibleUnshieldedOffer, `intent ${i} carries a fallible unshielded offer`)
+        .toBeFalsy();
+      expect(
+        intent.dustActions?.registrations?.length ?? 0,
+        `intent ${i} carries a DUST registration signed with the agent's NIGHT key`,
+      ).toBe(0);
+    }
   }, 10 * 60_000);
 
   it('leaves the payer\'s NIGHT untouched by payments', async () => {
@@ -309,7 +403,7 @@ describe(`m402Vault (${network})`, () => {
 
   it('redeems unspent credit back to NIGHT', async () => {
     const remaining = await agentCredit();
-    expect(remaining).toEqual(DEPOSIT - PRICE * 2n);
+    expect(remaining).toEqual(DEPOSIT - PRICE * paysMade);
 
     // redeem takes only a recipient; the amount is whatever coin the witness builds.
     const priv = await providers.privateStateProvider.get(PRIVATE_STATE_ID);
@@ -338,7 +432,7 @@ describe(`m402Vault (${network})`, () => {
 
   it('pays the merchant and empties the pool', async () => {
     const owed = (await readLedger()).merchantBalance.lookup(merchantOwner);
-    expect(owed).toEqual(PRICE * 2n);
+    expect(owed).toEqual(PRICE * paysMade);
 
     await timed('withdraw', () =>
       (submitCallTx<Contract, 'withdraw'>)(providers, {
@@ -355,7 +449,177 @@ describe(`m402Vault (${network})`, () => {
 
     // Solvency, end to end. The agent deposited DEPOSIT and got back everything
     // except what it actually spent, so the vault created nothing and stranded
-    // nothing. The merchant's PRICE * 2 left the pool to the registered address.
-    expect(await agentNight()).toEqual(nightBefore - PRICE * 2n);
+    // nothing. The merchant's PRICE * paysMade left the pool to the registered address.
+    expect(await agentNight()).toEqual(nightBefore - PRICE * paysMade);
   }, 10 * 60_000);
+
+  // Every case below fails during local circuit execution, before proving, so each
+  // costs milliseconds rather than ~20s. They are the security claims stated as tests.
+  describe('rejections', () => {
+    const call = <C extends 'pay' | 'withdraw' | 'registerService'>(
+      circuitId: C,
+      args: unknown[],
+      compiled = CompiledM402Vault,
+    ) =>
+      (submitCallTx as never as (p: unknown, o: unknown) => Promise<unknown>)(providers, {
+        compiledContract: compiled,
+        contractAddress,
+        privateStateId: PRIVATE_STATE_ID,
+        circuitId,
+        args,
+      });
+
+    it('withdraw rejects a zero amount', async () => {
+      // Without this guard, anyone can write merchantBalance once per block for free
+      // and fail every concurrent payment to that merchant.
+      await expect(call('withdraw', [serviceId, 0n])).rejects.toThrow(/amount must be positive/);
+    });
+
+    it('withdraw rejects more than the balance', async () => {
+      await expect(call('withdraw', [serviceId, 1n])).rejects.toThrow(
+        /insufficient balance|no balance/,
+      );
+    });
+
+    it('withdraw rejects an unknown service', async () => {
+      const unknown = new Uint8Array(randomBytes(32));
+      await expect(call('withdraw', [unknown, 1n])).rejects.toThrow(/unknown service/);
+    });
+
+    it('registerService rejects re-registering the same owner and salt', async () => {
+      // The revenue-redirection guard. Map.insert overwrites without it.
+      await expect(call('registerService', [salt, PRICE, merchantOwner])).rejects.toThrow(
+        /already registered/,
+      );
+    });
+
+    it('registerService rejects a zero price', async () => {
+      const freshSalt = new Uint8Array(randomBytes(32));
+      await expect(call('registerService', [freshSalt, 0n, merchantOwner])).rejects.toThrow(
+        /price must be positive/,
+      );
+    });
+
+    // A hostile agent controls its own witnesses, so the attacks below are exactly what
+    // a real attacker would do: supply a coin the contract should refuse.
+    const hostile = (bad: Partial<{ color: Uint8Array; value: (p: bigint) => bigint }>) =>
+      CompiledContract.make('M402VaultHostile', Contract).pipe(
+        CompiledContract.withWitnesses({
+          ...witnesses,
+          creditCoin: (ctx: never, _sid: Uint8Array, price: bigint) => {
+            const [ps, coin] = witnesses.creditCoin(ctx, _sid, price);
+            return [
+              ps,
+              { ...coin, ...(bad.color ? { color: bad.color } : {}),
+                value: bad.value ? bad.value(price) : coin.value },
+            ];
+          },
+        } as never),
+        CompiledContract.withCompiledFileAssets(zkConfigPath),
+      );
+
+    it('pay rejects a coin of the wrong colour', async () => {
+      // Without the colour assert, an attacker mints a worthless token and buys calls.
+      const forged = hostile({ color: new Uint8Array(randomBytes(32)) });
+      await expect(call('pay', [serviceId], forged)).rejects.toThrow(/not an m402 credit/);
+    });
+
+    it('pay rejects underpayment', async () => {
+      // The core solvency assert. If this passes, there is no payment guarantee at all.
+      const short = hostile({ value: (p) => p - 1n });
+      await expect(call('pay', [serviceId], short)).rejects.toThrow(/wrong amount/);
+    });
+
+    it('pay rejects overpayment', async () => {
+      // pay consumes the whole coin but credits only price, so an overpaying coin
+      // burns the difference. == closes it; >= left it open.
+      const over = hostile({ value: (p) => p + 1n });
+      await expect(call('pay', [serviceId], over)).rejects.toThrow(/wrong amount/);
+    });
+
+    it('measures whether concurrent writes to the same contract conflict (H4)', async () => {
+      // Each caller needs its OWN on-disk database. LevelDB is single-writer, so two
+      // concurrent calls sharing one database fail with "Database failed to open" — a local
+      // artifact that looks exactly like on-chain contention and invalidated an earlier
+      // reading of this test.
+      //
+      // `privateStateStoreName` is NOT enough. It names an object store *inside* the
+      // database; the directory on disk is `midnightDbName`, which defaults to
+      // MN_LDB_DEFAULT_DB_NAME = "midnight-level-db". Overriding only the store name left
+      // both callers opening that one directory, and attempt 4 died with
+      // "IO error: lock midnight-level-db/LOCK: already held by process". Both names must
+      // differ per caller.
+      //
+      // registerService touches no coins, so with that removed anything left is genuine
+      // contract-level contention rather than wallet coin selection.
+      // A fresh store starts empty AND scopes its keys by contract address. Miss either
+      // and the call fails locally without ever reaching the chain — which is how this
+      // measurement was wrong the second time ("No private state found") and the third
+      // ("Contract address not set").
+      const mk = async (tag: string) => {
+        const id = `${PRIVATE_STATE_ID}-${tag}`;
+        const p = buildProviders(wallet, zkConfigPath, config, {
+          privateStateStoreName: `m402-conc-${tag}-${Date.now()}`,
+          midnightDbName: `${dbRoot}/m402-conc-${tag}-${Date.now()}`,
+        });
+        p.privateStateProvider.setContractAddress(contractAddress);
+        await p.privateStateProvider.set(id, emptyPrivateState());
+        return { p, id };
+      };
+
+      // A submission the NODE rejects does not settle its promise — it waits for a
+      // confirmation that never arrives. Attempt 5 reached the chain, both calls were
+      // rejected with `1010 Invalid Transaction: Custom error: 170`
+      // (InvalidDustSpendProof), and the test then hung to its 10-minute timeout instead
+      // of printing the count. A timeout that RESOLVES turns that hang into a reading.
+      const SUBMIT_TIMEOUT_MS = 90_000;
+      const fire = ({ p, id }: { p: VaultProviders; id: string }) =>
+        Promise.race([
+          (submitCallTx as never as (pr: unknown, o: unknown) => Promise<unknown>)(p, {
+            compiledContract: CompiledM402Vault,
+            contractAddress,
+            privateStateId: id,
+            circuitId: 'registerService',
+            args: [new Uint8Array(randomBytes(32)), PRICE, new Uint8Array(randomBytes(32))],
+          }),
+          new Promise((_, reject) =>
+            setTimeout(
+              () => reject(new Error(`no confirmation within ${SUBMIT_TIMEOUT_MS} ms`)),
+              SUBMIT_TIMEOUT_MS,
+            ).unref(),
+          ),
+        ]);
+
+      const [a, b] = await Promise.all([mk('a'), mk('b')]);
+      const before = (await readLedger()).servicePrice.size();
+      const results = await Promise.allSettled([fire(a), fire(b)]);
+      const after = (await readLedger()).servicePrice.size();
+      const landed = after - before;
+
+      // console, not the logger: pino's transport is torn down before it flushes.
+      console.log(`\nCONCURRENCY: ${landed} of 2 concurrent registerService calls landed on chain`);
+      for (const r of results) {
+        if (r.status === 'rejected') console.log(`  rejected: ${String(r.reason).slice(0, 240)}`);
+      }
+
+      // Measured, not asserted. Read it carefully:
+      //   2 landed  → distinct-key writes do NOT conflict. No contract-wide ceiling.
+      //   0 or 1    → AMBIGUOUS. Both callers share one wallet, so the bottleneck could
+      //               be the wallet rather than the contract. Isolating that needs a
+      //               second funded wallet, which we do not have on Preview.
+      //
+      // Check the rejection reasons BEFORE reading the count as a contract property.
+      // `Custom error: 170` is InvalidDustSpendProof — a DUST fee-layer rejection from
+      // two transactions built concurrently against one wallet's DUST state. The node
+      // throws it out before contract execution, so it says nothing about whether the
+      // CONTRACT conflicts. Every sequential call in this same run succeeds, which is
+      // what isolates the cause to sharing one wallet.
+      expect(landed).toBeGreaterThanOrEqual(0n);
+    }, 10 * 60_000);
+
+    it('pay rejects an unknown service', async () => {
+      const unknown = new Uint8Array(randomBytes(32));
+      await expect(call('pay', [unknown])).rejects.toThrow(/unknown service/);
+    });
+  });
 });
