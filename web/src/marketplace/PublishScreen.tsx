@@ -33,7 +33,9 @@ export function PublishScreen({ onDone }: PublishScreenProps) {
   const [type, setType] = useState<'origin' | 'relay'>('origin');
   const [url, setUrl] = useState('https://api.example.com/weather');
   const [price, setPrice] = useState('0.01');
-  const [chain, setChain] = useState('eip155:8453');
+  // Testnet by default: the relayer holds Base Sepolia USDC only, and defaulting to
+  // mainnet made every relay registration land on a chain it cannot pay on.
+  const [chain, setChain] = useState('eip155:84532');
   const [ack, setAck] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
 
@@ -124,9 +126,12 @@ export function PublishScreen({ onDone }: PublishScreenProps) {
             >
               <Input mono value={url} onChange={setUrl} />
             </Field>
+            {/* Only the two chains the gateway accepts (routes.ts SUPPORTED_RELAY_CHAINS).
+                Ethereum mainnet used to be offered here and could never work: the gateway
+                rejects it with unsupported-relay-chain and chainFromCaip2 throws on it. */}
             {type === 'relay' && (
-              <Field label="Chain" hint="CAIP-2 identifier. Selects the viem client.">
-                <Select value={chain} onChange={setChain} options={[{ value: 'eip155:8453', label: 'Base — eip155:8453' }, { value: 'eip155:1', label: 'Ethereum — eip155:1' }]} />
+              <Field label="Chain" hint="CAIP-2 identifier. Selects the network the relayer pays on.">
+                <Select value={chain} onChange={setChain} options={[{ value: 'eip155:84532', label: 'Base Sepolia — eip155:84532 (testnet)' }, { value: 'eip155:8453', label: 'Base — eip155:8453 (mainnet)' }]} />
               </Field>
             )}
             <Field label="Price (USD)" required hint={`Converted once, at registration, at a fixed rate → ${star} STAR. The on-chain price is fixed; the USD figure drifts.`}>
