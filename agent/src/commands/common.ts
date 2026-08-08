@@ -13,9 +13,9 @@ const phaseLabels: Record<AgentPhase, string> = {
   confirming: 'waiting for confirmation',
 };
 
-export function parsePositiveAmount(value: string | undefined, label: string): bigint {
+export function parsePositiveAmount(value: string | undefined, label: string, unit = 'STAR'): bigint {
   if (!value || !/^\d+$/.test(value) || BigInt(value) <= 0n) {
-    throw new Error(`${label} must be a positive integer in STAR.`);
+    throw new Error(`${label} must be a positive integer in ${unit}.`);
   }
   return BigInt(value);
 }

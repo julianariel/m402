@@ -22,7 +22,7 @@ async function confirmRedeem(amount: bigint): Promise<boolean> {
   const readline = createInterface({ input: process.stdin, output: process.stderr });
   try {
     const answer = await readline.question(
-      `Redeem ${amount} credits to this wallet's own unshielded address? [y/N] `,
+      `Redeem ${amount} mSTAR to this wallet's own unshielded address? [y/N] `,
     );
     return /^y(es)?$/i.test(answer.trim());
   } finally {
@@ -36,7 +36,7 @@ export async function redeemCommand(
   output: Output,
   yes: boolean,
 ): Promise<void> {
-  const amount = parsePositiveAmount(amountArg, 'Redeem amount');
+  const amount = parsePositiveAmount(amountArg, 'Redeem amount', 'mSTAR');
   const vaultAddress = requireVaultAddress(config);
   requirePrivateStatePassword();
 

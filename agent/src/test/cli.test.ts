@@ -62,6 +62,16 @@ describe('CLI startup', () => {
 
     expect(performance.now() - startedAt).toBeLessThan(STARTUP_BUDGET_MS);
   });
+
+  // deposit's amount is native NIGHT converted to credit 1:1 (STAR); redeem's amount is a
+  // credit balance already held, entered as an exact atomic count (mSTAR). See
+  // docs/design.md#4 and commands/common.ts's parsePositiveAmount.
+  it('labels the deposit amount STAR and the redeem amount mSTAR', async () => {
+    const { stdout } = await exec(TSX, [CLI, '--help'], { cwd: AGENT_DIR });
+
+    expect(stdout).toContain('m402 deposit <amount-star>');
+    expect(stdout).toContain('m402 redeem <amount-mstar>');
+  });
 });
 
 describe('CLI', () => {

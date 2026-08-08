@@ -1,3 +1,4 @@
+import { formatAtomic } from '@m402/shared';
 import { requireVaultAddress, type AgentConfig } from '../config.js';
 import type { Output } from '../output.js';
 import { formatDuration } from '../output.js';
@@ -25,7 +26,7 @@ export async function depositCommand(
     return;
   }
   output.success(
-    `Deposited ${amount} credits (one-off) | proof ${formatDuration(timing.proveMs)} | ` +
+    `Deposited ${formatAtomic(amount)} (one-off) | proof ${formatDuration(timing.proveMs)} | ` +
       `confirm ${formatDuration(timing.confirmMs)}`,
   );
   output.info('Next: m402 call <gateway-url>');
