@@ -15,6 +15,27 @@ export function headersForUpstream(req: Request): Headers {
   return headers;
 }
 
+function proxyResponse(upstream: Response): Response {
+  const headers = new Headers(upstream.headers);
+  // Node fetch transparently decodes compressed bodies but retains the original
+  // encoding and framing headers. Forwarding those makes downstream fetch fail.
+  for (const name of [
+    'connection',
+    'content-encoding',
+    'content-length',
+    'keep-alive',
+    'proxy-authenticate',
+    'proxy-authorization',
+    'te',
+    'trailer',
+    'transfer-encoding',
+    'upgrade',
+  ]) {
+    headers.delete(name);
+  }
+  return new Response(upstream.body, { status: upstream.status, headers });
+}
+
 export async function dispatchOrigin(service: Service, req: Request, timeoutMs = 10_000): Promise<Response> {
   const incoming = new URL(req.url);
   const suffix = incoming.pathname.replace(/^\/s\/[^/]+/, '');
@@ -36,7 +57,7 @@ export async function dispatchOrigin(service: Service, req: Request, timeoutMs =
       duplex: hasBody ? 'half' : undefined,
       signal: controller.signal,
     });
-    return new Response(upstream.body, { status: upstream.status, headers: upstream.headers });
+    return proxyResponse(upstream);
   } catch {
     return new Response(null, { status: 504 });
   } finally {
@@ -90,7 +111,7 @@ export function createRelayDispatcher(relayerKeyFile: string, maxPayment = 100_0
         headers: headersForUpstream(req),
         body,
       });
-      return new Response(upstream.body, { status: upstream.status, headers: upstream.headers });
+      return proxyResponse(upstream);
     } catch (err) {
       console.error('relay dispatch failed after a possible USDC payment — absorbed as relayer loss', {
         serviceId: service.id,

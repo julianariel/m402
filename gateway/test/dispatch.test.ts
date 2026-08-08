@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createServer, type Server } from 'node:http';
+import { brotliCompressSync } from 'node:zlib';
 import { dispatchOrigin } from '../src/dispatch.js';
 
 function listen(server: Server): Promise<string> {
@@ -21,6 +22,16 @@ describe('dispatchOrigin', () => {
     server = createServer((req, res) => {
       lastRequest = { url: req.url, headers: req.headers };
       if (req.url === '/hang') return; // never responds — exercises the timeout path
+      if (req.url === '/compressed') {
+        const body = brotliCompressSync('compressed response');
+        res.writeHead(200, {
+          'content-encoding': 'br',
+          'content-length': body.length,
+          'content-type': 'text/plain',
+        });
+        res.end(body);
+        return;
+      }
       res.writeHead(200, { 'content-type': 'text/plain' });
       res.end('origin response');
     });
@@ -47,6 +58,17 @@ describe('dispatchOrigin', () => {
     await dispatchOrigin(service, req);
 
     expect(lastRequest?.headers['x-payment']).toBeUndefined();
+  });
+
+  it('does not forward stale compression headers with a decoded body', async () => {
+    const service = { id: 'svc1', price: 1n, owner: 'o', type: 'origin' as const, target: baseUrl };
+    const req = new Request('http://gateway.local/s/svc1/compressed');
+
+    const res = await dispatchOrigin(service, req);
+
+    expect(await res.text()).toBe('compressed response');
+    expect(res.headers.get('content-encoding')).toBeNull();
+    expect(res.headers.get('content-length')).toBeNull();
   });
 
   it('returns 504 when the origin does not respond in time', async () => {
