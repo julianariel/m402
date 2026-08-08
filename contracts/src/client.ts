@@ -290,9 +290,10 @@ export type WalletSummary = {
   /**
    * Credit held as INDIVIDUAL coin values, largest first.
    *
-   * The total on its own is misleading: `pay` asserts `coin.value == price` exactly and
-   * there is no change, so 1000 held as one 1000 coin can pay a 1000 service while the same
-   * 1000 held as two 500s cannot. Only the denominations answer "what can I actually buy".
+   * Informational, not a spending constraint. `pay` receives a coin worth exactly `price`,
+   * but the wallet's balancer splits a larger coin and takes the remainder back as change -
+   * `deploy.test.ts` deposits 5000 once, pays 500 three times and redeems the 3500 left.
+   * Spendability is decided by `creditTotal`; these explain how that total is made up.
    */
   creditCoins: bigint[];
 };

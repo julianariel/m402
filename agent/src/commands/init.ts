@@ -16,8 +16,11 @@ import { withAgentContext } from './common.js';
  * proving. `init` is simply the first run, made explicit and named, so the eleven minutes
  * happen before a demo rather than during one.
  *
- * It reports credit as individual COIN VALUES, not just a total, because `pay` asserts
- * `coin.value == price` exactly and there is no change. See ./deposit.ts.
+ * Credit is reported as a total AND as individual coin values. Spending only needs the total
+ * to cover the price: `pay` receives a coin worth exactly `price`, but the wallet's balancer
+ * splits a larger coin and keeps the remainder as change. The denominations are shown because
+ * they explain the shielded balance you would otherwise see as one opaque number, not because
+ * they gate what you can buy.
  */
 export async function initCommand(config: AgentConfig, output: Output): Promise<void> {
   const vaultAddress = requireVaultAddress(config);
@@ -73,11 +76,14 @@ export async function initCommand(config: AgentConfig, output: Output): Promise<
 
   output.info(`Services registered: ${vault.services.length}`);
   for (const service of vault.services) {
-    // Flag payability per service: a coin must match the price exactly.
-    const payable = summary.creditCoins.includes(service.price);
+    // Total, not denominations. `pay` needs a coin worth exactly `price`, but the wallet's
+    // balancer splits a larger coin and takes the remainder back as change - proven by
+    // deploy.test.ts, which deposits 5000 once, pays 500 three times and redeems the 3500
+    // left over. Only the total has to cover the price.
+    const payable = summary.creditTotal >= service.price;
     output.info(
       `  ${service.id.slice(0, 16)}...  ${service.price} STAR  ` +
-        `${payable ? 'payable now' : `needs: m402 deposit ${service.price}`}`,
+        `${payable ? 'payable' : `short by ${service.price - summary.creditTotal}`}`,
     );
   }
 }

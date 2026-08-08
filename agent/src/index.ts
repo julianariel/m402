@@ -23,7 +23,7 @@ Usage:
 
 Run 'm402 init' first. It submits nothing; it syncs the wallet and reports what you hold,
 so the one-off multi-minute sync happens when you choose rather than inside your first
-payment. Deposit EXACTLY a service's price: pay spends a whole coin and gives no change.
+payment. One deposit covers many calls - the wallet splits a larger coin and takes change.
 
 Examples:
   m402 init
