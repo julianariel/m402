@@ -87,7 +87,6 @@ const strongSecondary: CSSProperties = { fontWeight: 'var(--fw-medium)', color: 
 const pBody: CSSProperties = { margin: 0, font: 'var(--fw-regular) var(--fs-body-sm)/1.6 var(--font-body)', color: 'var(--text-muted)' };
 const pNested: CSSProperties = { margin: 'var(--space-3) 0 0', font: 'var(--fw-regular) var(--fs-body-sm)/1.6 var(--font-body)', color: 'var(--text-muted)' };
 const olBody: CSSProperties = { margin: 0, paddingLeft: '1.3em', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', font: 'var(--fw-regular) var(--fs-body-sm)/1.6 var(--font-body)', color: 'var(--text-muted)' };
-const olMuted: CSSProperties = { margin: 'var(--space-3) 0 0', paddingLeft: '1.3em', display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', font: 'var(--fw-regular) var(--fs-body-sm)/1.6 var(--font-body)', color: 'var(--text-muted)' };
 
 const HOME_ANCHORS = new Set(['what', 'compare', 'how', 'ledger', 'roadmap']);
 
@@ -363,13 +362,8 @@ function HomeScreen({ navigate }: { navigate: (path: string) => void }) {
               <a href={REPO_URL + '/blob/main/docs/constraints.md#a-shielded-amount-cannot-be-returned-as-change'} target="_blank" rel="noopener noreferrer">constraints</a>.
             </LimitationEntry>
             <LimitationEntry icon="layers">
-              <strong style={strongSecondary}>Concurrent throughput is unmeasured.</strong> A security review argued that writes to a contract conflict contract-wide rather than per key, which would cap a vault at about one transaction per block. Three attempts to measure it have all failed <em>locally</em>, before either call reached the chain, and every failure mode looks exactly like on-chain contention:
-              <ol style={olMuted}>
-                <li>Both callers shared one LevelDB private-state store. LevelDB is single-writer.</li>
-                <li>Fresh stores, but a fresh store is empty — &ldquo;No private state found&rdquo;.</li>
-                <li>Seeded stores, but a store scopes its keys by contract address — &ldquo;Contract address not set&rdquo;.</li>
-              </ol>
-              <p style={pNested}>The attempt-3 fix is in <code style={codeMono}>deploy.test.ts</code> and has not yet had a green run. Treat the ceiling as unknown until the test reports <strong style={strongSecondary}>2 of 2 landed</strong>. A 0 or a 1 is ambiguous, not a measurement: both callers share one wallet, so the bottleneck could be wallet coin selection rather than the contract. Separating them needs a second funded Preview wallet.</p>
+              <strong style={strongSecondary}>Concurrent throughput is unmeasured.</strong> A security review argued that writes to a contract conflict contract-wide rather than per key, which would cap a vault at about one transaction per block. It stays unmeasured because one wallet cannot submit two transactions at once — the node rejects the second at the DUST layer, before the contract runs, so nothing about contract contention is observable from a single-wallet harness. Measuring it needs a second funded Preview wallet. See{' '}
+              <a href={REPO_URL + '/blob/main/docs/constraints.md#one-wallet-cannot-submit-two-transactions-concurrently'} target="_blank" rel="noopener noreferrer">constraints</a>.
               <p style={pNested}><code style={codeMono}>pay</code> also does a read-modify-write on <code style={codeMono}>merchantBalance[owner]</code>, which conflicts per merchant regardless of how coarse the platform's detection turns out to be. <code style={codeMono}>Map&lt;Bytes&lt;32&gt;, Counter&gt;</code> would remove that, and batching — already on this roadmap and inherited from x402's own — is the general fix.</p>
             </LimitationEntry>
             <LimitationEntry icon="link">
@@ -392,7 +386,7 @@ function HomeScreen({ navigate }: { navigate: (path: string) => void }) {
             </LimitationEntry>
             <LimitationEntry icon="shield">
               <strong style={strongSecondary}>Privacy is bounded by the anonymity set.</strong> An individual payment is unlinkable only among the other payments drawn from the pool. With one depositor and a handful of calls, an observer correlates a public deposit with the receipts that follow it, by amount and by timing — separate transactions are not enough on their own. This is a property of usage rather than of the contract, and it is the same caveat every shielded pool carries.
-              <p style={pNested}>Three things raise it, none of which need code: deposit <strong style={strongSecondary}>round amounts</strong> well above any single price, deposit <strong style={strongSecondary}>ahead of time</strong> rather than immediately before spending, and have <strong style={strongSecondary}>more than one agent</strong> funding the pool. Deposit and payment must never share a transaction — that would bind amount, payer and nullifier into one public record and make the proof pointless.</p>
+              <p style={pNested}>Three things raise it, none of which need code: deposit <strong style={strongSecondary}>round amounts</strong> well above any single price, deposit <strong style={strongSecondary}>ahead of time</strong> rather than immediately before spending, and have <strong style={strongSecondary}>more than one agent</strong> funding the pool. Deposit and payment must never share a transaction — that would bind amount, payer and receipt into one public record and make the proof pointless.</p>
             </LimitationEntry>
             <LimitationEntry icon="radio">
               <strong style={strongSecondary}>Network metadata is out of scope.</strong> The gateway observes IP addresses and timing. m402 addresses protocol-level privacy: agents authenticate with a proof rather than an account, so the gateway never learns who is paying or how much.
@@ -403,8 +397,11 @@ function HomeScreen({ navigate }: { navigate: (path: string) => void }) {
             <LimitationEntry icon="lock">
               <strong style={strongSecondary}>Losing a receipt secret loses the purchase.</strong> Only <code style={codeMono}>hash(secret, serviceId)</code> reaches the chain, so the secret is the only proof a payment happened. It is written to the agent's private state, which is an unreplicated local LevelDB store with a hardcoded development password. Delete the store and the paid-for call cannot be claimed. Accepted for the hackathon; a real deployment needs the secret persisted before the transaction is submitted, not after, and backed up.
             </LimitationEntry>
+            <LimitationEntry icon="clock">
+              <strong style={strongSecondary}>Registration is not optimistic.</strong> <code style={codeMono}>POST /services</code> to the gateway's registry checks <code style={codeMono}>serviceOwner[id]</code> on-chain before accepting the write, and rejects with a retryable <code style={codeMono}>503</code> until the <code style={codeMono}>registerService</code> transaction is visible. This closes the gap where a client could claim ownership the chain never granted, but it means the merchant UI cannot show the service URL immediately — it has to poll/retry through the confirmation window (same order of magnitude as a proof: ~20–30s) rather than badging an unconfirmed state as &ldquo;live&rdquo; early.
+            </LimitationEntry>
             <LimitationEntry icon="circle-alert" last>
-              <strong style={strongSecondary}>The payer-anonymity claim has a test, and that test has not yet passed.</strong> &ldquo;puts no payer identity into a pay transaction&rdquo; in <code style={codeMono}>deploy.test.ts</code> asserts that a <code style={codeMono}>pay</code> transaction carries no unshielded offer and no DUST registration — either would bind the agent's public NIGHT address to the payment. Its first run failed on harness plumbing rather than on the assertion, so the claim is currently reasoned, not demonstrated.
+              <strong style={strongSecondary}>A secret paid for the wrong service degrades to a timeout, sometimes.</strong> The gateway detects this case (<code style={codeMono}>wrong-service</code>) only against services it already knows about at the moment <code style={codeMono}>verify()</code> starts — a service registered <em>during</em> the wait window won't be in that precomputed candidate set, so a secret paid against it would still time out rather than return the more specific result.
             </LimitationEntry>
           </div>
         </Section>
