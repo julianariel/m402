@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { usdToStar } from '@m402/shared';
-import { Badge, Button, Card } from '../components/core';
+import { Badge, Button, Card, StatusDot } from '../components/core';
 import { Checkbox, Field, Input, Select } from '../components/forms';
 import { CodeBlock, HashChip, PriceTag } from '../components/protocol';
 import { useWalletContext } from '../wallet/WalletContext';
@@ -20,7 +20,7 @@ type Phase =
   | { kind: 'connecting' }
   | { kind: TxPhase }
   | { kind: 'gateway' }
-  | { kind: 'done'; txId: string; serviceId: string }
+  | { kind: 'done'; txId: string }
   | { kind: 'error'; message: string };
 
 function hex(bytes: Uint8Array): string {
@@ -36,11 +36,16 @@ export function PublishScreen({ onDone }: PublishScreenProps) {
   const [chain, setChain] = useState('eip155:8453');
   const [ack, setAck] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
+  // Set the instant serviceId is known (see chain/circuits.ts's onServiceId) — before proving
+  // even starts, well before `phase` reaches 'done'. Independent state because it must survive
+  // the transition through 'proving' / 'confirming' / 'gateway' unchanged.
+  const [serviceIdHex, setServiceIdHex] = useState<string | null>(null);
 
   const star = usdToStar(parseFloat(price) || 0).toString();
   const busy = phase.kind !== 'idle' && phase.kind !== 'done' && phase.kind !== 'error';
 
   async function handlePublish() {
+    setServiceIdHex(null);
     setPhase({ kind: 'connecting' });
     try {
       const priceStar = usdToStar(parseFloat(price) || 0);
@@ -54,22 +59,29 @@ export function PublishScreen({ onDone }: PublishScreenProps) {
       if (!owner) throw new Error('Could not read the connected wallet address.');
 
       const salt = crypto.getRandomValues(new Uint8Array(32));
-      const { txId, serviceId } = await registerServiceOnChain(
+      // registerServiceOnChain calls onServiceId synchronously, before proving starts, so the
+      // wrapped URL below appears immediately — badged "confirming" — while the transaction
+      // proves and confirms in the background (~22-28s on Preview).
+      let confirmedServiceIdHex = '';
+      const { txId } = await registerServiceOnChain(
         providers,
         VAULT_ADDRESS,
         { salt, price: priceStar, owner },
         (p) => setPhase({ kind: p }),
+        (id) => {
+          confirmedServiceIdHex = hex(id);
+          setServiceIdHex(confirmedServiceIdHex);
+        },
       );
 
       setPhase({ kind: 'gateway' });
-      const serviceIdHex = hex(serviceId);
       // registerService just confirmed, but the gateway's own ownership check re-queries the
       // indexer independently (ownership.ts) — it can briefly lag behind watchForTxData. Retry.
       const gatewayRetryDelaysMs = [1_000, 2_000, 4_000, 8_000];
       for (let attempt = 0; ; attempt++) {
         try {
           await registerGatewayService({
-            id: serviceIdHex,
+            id: confirmedServiceIdHex,
             price: priceStar,
             owner: hex(owner),
             type,
@@ -85,7 +97,7 @@ export function PublishScreen({ onDone }: PublishScreenProps) {
         }
       }
 
-      setPhase({ kind: 'done', txId, serviceId: serviceIdHex });
+      setPhase({ kind: 'done', txId });
     } catch (err) {
       setPhase({ kind: 'error', message: err instanceof Error ? err.message : 'Registration failed.' });
     }
@@ -154,19 +166,26 @@ export function PublishScreen({ onDone }: PublishScreenProps) {
         </Card>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-          {phase.kind === 'done' ? (
-            <Card padding="md" accent="private">
+          {serviceIdHex ? (
+            <Card padding="md" accent={phase.kind === 'done' ? 'private' : phase.kind === 'error' ? undefined : 'pending'}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-                <Badge tone="private" icon="shield-check">registered on-chain</Badge>
+                <StatusDot
+                  tone={phase.kind === 'done' ? 'live' : phase.kind === 'error' ? 'error' : 'confirming'}
+                  label={phase.kind === 'done' ? 'live' : phase.kind === 'error' ? 'registration failed' : 'confirming on-chain…'}
+                />
                 <div style={{ font: 'var(--text-code)', color: 'var(--text-primary)', wordBreak: 'break-all' }}>
-                  {GATEWAY_URL}/s/{phase.serviceId}
+                  {GATEWAY_URL}/s/{serviceIdHex}
                 </div>
-                <HashChip label="serviceid" value={phase.serviceId} tone="public" />
-                <HashChip label="tx" value={phase.txId} tone="public" />
+                <HashChip label="serviceid" value={serviceIdHex} tone="public" />
+                {phase.kind === 'done' && <HashChip label="tx" value={phase.txId} tone="public" />}
                 <div style={{ font: 'var(--fw-regular) var(--fs-caption)/1.6 var(--font-body)', color: 'var(--text-muted)' }}>
-                  registerService confirmed on-chain, and the gateway has accepted the routing entry. The wrapped URL is live.
+                  {phase.kind === 'done'
+                    ? 'registerService confirmed on-chain, and the gateway has accepted the routing entry. The wrapped URL is live.'
+                    : phase.kind === 'error'
+                    ? 'The URL above was derived off-chain and is still yours, but the registration transaction did not land — see the error below and retry.'
+                    : 'serviceId is derived off-chain, so the URL above is already yours. registerService is proving and confirming in the background — this can take ~22-28s on Preview.'}
                 </div>
-                <Button variant="secondary" size="sm" onClick={onDone}>Back to explorer</Button>
+                {phase.kind === 'done' && <Button variant="secondary" size="sm" onClick={onDone}>Back to explorer</Button>}
               </div>
             </Card>
           ) : (
