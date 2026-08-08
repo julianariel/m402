@@ -171,14 +171,18 @@ export async function stopAgentContext(context: AgentContext): Promise<void> {
   await context.wallet.stop();
 }
 
-async function submit<PCK extends 'deposit' | 'pay' | 'redeem'>(
+type ClientCircuit = 'registerService' | 'deposit' | 'pay' | 'redeem';
+
+async function submit<PCK extends ClientCircuit>(
   context: AgentContext,
   circuitId: PCK,
-  args: PCK extends 'deposit'
-    ? [bigint]
-    : PCK extends 'pay'
-      ? [Uint8Array]
-      : [Uint8Array],
+  args: PCK extends 'registerService'
+    ? [Uint8Array, bigint, Uint8Array]
+    : PCK extends 'deposit'
+      ? [bigint]
+      : PCK extends 'pay'
+        ? [Uint8Array]
+        : [Uint8Array],
   onSubmitted?: (submitted: SubmittedCall) => Promise<void> | void,
 ): Promise<TransactionTiming> {
   const timing = instrumentProofProvider(context.providers.proofProvider, context.onPhase);
@@ -220,6 +224,28 @@ async function submit<PCK extends 'deposit' | 'pay' | 'redeem'>(
     confirmMs: Math.max(0, Math.round(performance.now() - submittedAt)),
     totalMs,
   };
+}
+
+export type RegisteredService = TransactionTiming & {
+  serviceId: Uint8Array;
+  owner: Uint8Array;
+  salt: Uint8Array;
+  price: bigint;
+};
+
+export async function registerService(
+  context: AgentContext,
+  price: bigint,
+  salt: Uint8Array = new Uint8Array(randomBytes(32)),
+): Promise<RegisteredService> {
+  if (price <= 0n) throw new Error('Service price must be positive.');
+  if (salt.length !== 32) throw new Error('Service salt must contain exactly 32 bytes.');
+
+  const walletState = await Rx.firstValueFrom(context.wallet.wallet.state());
+  const owner = new Uint8Array(walletState.unshielded.address.data);
+  const serviceId = pureCircuits.deriveServiceId(owner, salt, price);
+  const timing = await submit(context, 'registerService', [salt, price, owner]);
+  return { ...timing, serviceId, owner, salt, price };
 }
 
 export async function depositCredit(
