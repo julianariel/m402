@@ -77,12 +77,19 @@ describe('GET /s/:id', () => {
     expect(await res.json()).toEqual({ reason: 'receipt-already-used' });
   });
 
-  it('returns 402 with the payment body again when the secret paid a different service', async () => {
+  it('returns 402 with the payment body and a reason when the secret paid a different service', async () => {
     const { app, registry } = testApp({ verify: async () => 'wrong-service' });
     registry.insert({ id: 'svc1', price: 500n, owner: 'o', type: 'origin', target: 'https://example.com' });
     const res = await app.request('/s/svc1', { headers: { 'X-Payment': 'receipt-secret-hex' } });
     expect(res.status).toBe(402);
-    expect(await res.json()).toEqual({ serviceId: 'svc1', price: '500', vaultAddress: 'vault-address' });
+    // The `reason` distinguishes this from the opening 402. Without it the two are
+    // byte-identical, and a caller cannot tell a terminal failure from "please pay" (#23).
+    expect(await res.json()).toEqual({
+      serviceId: 'svc1',
+      price: '500',
+      vaultAddress: 'vault-address',
+      reason: 'wrong-service',
+    });
   });
 
   it('returns 503 payment-pending with Retry-After on verification timeout', async () => {

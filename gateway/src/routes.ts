@@ -53,7 +53,11 @@ export function createRoutes(deps: RouteDeps): Hono {
       return c.json({ reason: 'receipt-already-used' }, 402);
     }
     if (result === 'wrong-service') {
-      return c.json(paymentRequiredBody(service, deps.vaultAddress), 402);
+      // Carries the payment requirements AND a reason. Without the reason this is
+      // byte-identical to the initial 402, so a caller cannot tell "you have not paid"
+      // from "you paid, but for a different service" — and the second is terminal while
+      // the first is the normal opening move. Adding a field is backward compatible.
+      return c.json({ ...paymentRequiredBody(service, deps.vaultAddress), reason: 'wrong-service' }, 402);
     }
 
     return deps.dispatch(service, c.req.raw);

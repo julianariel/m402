@@ -139,19 +139,16 @@ describe('gateway ↔ CLI seam', () => {
     await expect(claimResource(`${gw.url}/s/${SERVICE_ID}`, SECRET)).rejects.toThrow(/302/);
   });
 
-  // `it.fails` — this documents the defect in #23 without reddening a suite other people
-  // depend on. It passes while the bug exists and starts FAILING the moment #23 is fixed,
-  // which is the prompt to delete `.fails` and keep the test as a plain regression guard.
-  it.fails('retries while the gateway reports the payment is still pending', async () => {
-    // THE case this whole file exists for.
+  it('retries while the gateway reports the payment is still pending', async () => {
+    // THE case this whole file exists for, and the regression guard for #23.
     //
     // When a payment has landed but the gateway has not yet observed its receipt, the
     // gateway answers `503 {reason: 'payment-pending'}` with a Retry-After header — it is
     // explicitly asking the caller to come back.
     //
-    // The CLI's own mock-gateway models that same situation as a 402 (`laggedClaims`), and
-    // the CLI retries only on 402. So the agent suite passes against its imitation while
-    // the real pairing gives up on the first pending response.
+    // Before #23 the CLI retried only on 402 and treated every other non-ok status as
+    // fatal, so it gave up on the first pending response. Both suites stayed green because
+    // mock-gateway.ts modelled this case as a 402 too.
     let calls = 0;
     const gw = await startGateway({
       verify: async () => {
@@ -169,12 +166,12 @@ describe('gateway ↔ CLI seam', () => {
     expect(calls).toBe(3);
   });
 
-  // See the note above: `.fails` marks a known defect (#23), not an accepted behaviour.
-  it.fails('gives up promptly on a replayed receipt instead of retrying it', async () => {
+  it('gives up promptly on a replayed receipt instead of retrying it', async () => {
     // The mirror image of the test above. `receipt-already-used` is permanent — no amount
-    // of retrying makes a spent secret valid again. The gateway returns it as a 402, which
-    // is the CLI's signal to RETRY, so a replay costs the full backoff window and then
-    // reports "the gateway has not observed its receipt", which is not what happened.
+    // of retrying makes a spent secret valid again. The gateway returns it as a 402, and
+    // before #23 that was the CLI's signal to RETRY, so a replay cost the full backoff
+    // window and then reported "the gateway has not observed its receipt", which is not
+    // what happened. A 402 answering a request that carried a secret is now terminal.
     let calls = 0;
     const gw = await startGateway({
       verify: async () => {
@@ -188,9 +185,55 @@ describe('gateway ↔ CLI seam', () => {
         retryDelaysMs: [1, 1],
         sleep: async () => {},
       }),
-    ).rejects.toThrow(/already used|replay/i);
+    ).rejects.toThrow(/already been used/i);
 
     expect(calls).toBe(1);
+  });
+
+  it('does not retry a 503 that came from the origin rather than from verification', async () => {
+    // The retry rule matches on the REASON, not on the status. `dispatch` proxies the
+    // origin's own response, so a broken origin also arrives as a 503 — but the agent has
+    // already paid and the resource is not coming, so retrying only hammers it. Matching
+    // on 503 alone would turn one dead origin into six requests to it.
+    let dispatched = 0;
+    const gw = await startGateway({
+      dispatch: async () => {
+        dispatched++;
+        return new Response(JSON.stringify({ error: 'origin exploded' }), {
+          status: 503,
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    });
+
+    await expect(
+      claimResource(`${gw.url}/s/${SERVICE_ID}`, SECRET, {
+        retryDelaysMs: [1, 1, 1],
+        sleep: async () => {},
+      }),
+    ).rejects.toThrow(/503/);
+
+    expect(dispatched).toBe(1);
+  });
+
+  it("waits the gateway's Retry-After instead of its own ladder", async () => {
+    // The gateway sends `Retry-After: 5`. It knows more about its own indexer lag than a
+    // fixed client-side ladder does, so its estimate wins when it offers one.
+    let calls = 0;
+    const slept: number[] = [];
+    const gw = await startGateway({
+      verify: async () => (++calls < 2 ? 'timeout' : 'confirmed'),
+    });
+
+    await claimResource(`${gw.url}/s/${SERVICE_ID}`, SECRET, {
+      retryDelaysMs: [999_999],
+      sleep: async (ms) => {
+        slept.push(ms);
+      },
+    });
+
+    // 5s from the header, not the 999999 ladder entry.
+    expect(slept).toEqual([5_000]);
   });
 
   it('serves the service list in the shape the explorer needs', async () => {
@@ -215,8 +258,7 @@ describe('gateway ↔ CLI seam', () => {
 });
 
 describe('CLI mock-gateway fidelity', () => {
-  // See the note above: `.fails` marks a known defect (#23), not an accepted behaviour.
-  it.fails('models the pending-payment case the same way the real gateway does', async () => {
+  it('models the pending-payment case the same way the real gateway does', async () => {
     // A fixture that has drifted from the thing it imitates is worse than no fixture: it
     // turns a real defect into a green suite. This test fails whenever the two disagree.
     const gw = await startGateway({ verify: async () => 'timeout' });
