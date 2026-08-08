@@ -230,6 +230,43 @@ Removing testkit-js from the runtime path means rebuilding wallet construction d
 `@midnight-ntwrk/wallet-sdk`. Worth doing; not worth doing the day of a demo, since it only
 saves ~5 s on commands that already spend 30–60 s syncing.
 
+## Wallet sync dominates every command, and it replays unless you cache it
+
+A successful Preview deposit measured **739 s total**: proving 27.2 s, confirmation 1.4 s, and
+roughly **710 s of wallet sync**. The chain and the prover are a rounding error; the wallet is
+the cost.
+
+The reason is that `FluentWalletBuilder` can only build from a seed, and a from-seed wallet
+starts at `appliedIndex === 0`. Both `shielded/src/v1/Sync.ts` and `dust-wallet/src/v1/Sync.ts`
+compute `resumeFrom = appliedIndex - 1n` and open the subscription with **no cursor** when that
+is negative — so a fresh wallet streams every event the indexer has, from the beginning, on
+every single invocation.
+
+The sub-wallets expose `serializeState()` and `restore()`. `contracts/src/lib/wallet.ts` now
+persists all three after a synced state is reached and restores them on the next build, so
+`appliedIndex >= 1` and sync resumes. Restore is best-effort: any missing or unreadable file
+falls back to the from-seed build. Two rules that are not obvious:
+
+- **All three sub-wallets and the facade must share one `txHistoryStorage`.** Otherwise
+  shielded and unshielded writes go to a storage the facade never reads.
+- **Never cache before sync completes.** A mid-sync position restores cleanly and resumes from
+  somewhere the wallet never applied.
+
+The cache is keyed by a hash of the master seed and network id, holds the wallet's synced view
+including its coins, and is a wallet secret — `agent/.state/sync-cache`, mode 0600.
+
+## A dead sync fibre emits forever, so `Rx.timeout({ each })` never fires
+
+`syncWallet` waited with `Rx.timeout({ each: timeout })`, which only fires when emissions
+**stop**. A transient indexer WebSocket error is enough to kill one sub-wallet's sync fibre —
+observed on Preview as `Wallet.Sync: [object ErrorEvent]` from `wallet-sdk-dust-wallet`, seconds
+after start. The facade then keeps emitting state that never becomes strictly complete.
+Emissions continue, so `each` never fires and the caller waits forever; with the CLI's old
+one-hour default it was still running 25 minutes later and had to be killed.
+
+Use a **total** deadline, not an inter-emission one, and keep it short enough that a broken sync
+reports itself instead of looking slow. The CLI now allows 10 minutes.
+
 ## Paths in `agent/.env` are relative to that file
 
 `readFileSync` resolves a relative path against the process's working directory, not against
