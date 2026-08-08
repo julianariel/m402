@@ -62,7 +62,8 @@ async function startGateway(overrides: {
     verifyTimeoutMs: 50,
     verify: overrides.verify ?? (async () => 'confirmed'),
     probeOrigin: overrides.probeOrigin ?? (async () => true),
-    checkOwnership: async () => 'ok',
+    checkOwnership: async () => 'match',
+    relayTargetAllowlist: new Set<string>(),
     dispatch:
       overrides.dispatch ??
       (async () => new Response(JSON.stringify({ value: 42 }), {

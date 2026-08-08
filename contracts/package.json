@@ -27,10 +27,11 @@
   "scripts": {
     "build": "tsc && cp -R src/managed dist/",
     "compile": "compact compile src/m402Vault.compact src/managed/m402Vault",
-    "deploy": "MIDNIGHT_NETWORK=preview vitest run src/test/deploy.test.ts",
+    "deploy": "MIDNIGHT_NETWORK=preview tsx src/deploy-vault.ts",
     "prepack": "npm run build",
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "test": "vitest run --passWithNoTests --exclude \"**/deploy.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "test:chain": "MIDNIGHT_NETWORK=preview vitest run src/test/deploy.test.ts"
   },
   "dependencies": {
     "@midnight-ntwrk/midnight-js-protocol": "4.1.1",
