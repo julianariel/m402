@@ -255,17 +255,24 @@ falls back to the from-seed build. Two rules that are not obvious:
 The cache is keyed by a hash of the master seed and network id, holds the wallet's synced view
 including its coins, and is a wallet secret — `agent/.state/sync-cache`, mode 0600.
 
-## A dead sync fibre emits forever, so `Rx.timeout({ each })` never fires
+## A sub-wallet's sync can die while the command keeps waiting
 
-`syncWallet` waited with `Rx.timeout({ each: timeout })`, which only fires when emissions
-**stop**. A transient indexer WebSocket error is enough to kill one sub-wallet's sync fibre —
-observed on Preview as `Wallet.Sync: [object ErrorEvent]` from `wallet-sdk-dust-wallet`, seconds
-after start. The facade then keeps emitting state that never becomes strictly complete.
-Emissions continue, so `each` never fires and the caller waits forever; with the CLI's old
-one-hour default it was still running 25 minutes later and had to be killed.
+A transient indexer WebSocket error is enough to kill one sub-wallet's sync fibre — observed on
+Preview as `Wallet.Sync: [object ErrorEvent]` from `wallet-sdk-dust-wallet`, seconds after
+start. The facade goes on emitting state that never becomes strictly complete, so the command
+sits there looking slow rather than failing.
 
-Use a **total** deadline, not an inter-emission one, and keep it short enough that a broken sync
-reports itself instead of looking slow. The CLI now allows 10 minutes.
+**The deadline is the only thing that ends it, so its value is the whole design.** The CLI used
+60 minutes, which for an operator is indistinguishable from a hang: one such run was killed by
+hand after 25 minutes, still well inside its budget. It is now **10 minutes**, and
+`MIDNIGHT_SYNC_TIMEOUT_MS` overrides it.
+
+A note on the wait itself, since it is easy to get wrong in the other direction: `syncWallet`
+places its deadline *after* the `filter` that tests for a synced state. Emissions that fail the
+filter never reach it, so `Rx.timeout({ each })` there behaves as a total deadline rather than
+an inter-emission one — the two forms were measured as equivalent in this position. The code
+uses an explicit `Rx.race` against a timer so the deadline does not silently depend on where in
+the pipe it sits.
 
 ## Paths in `agent/.env` are relative to that file
 
