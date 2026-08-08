@@ -1,6 +1,7 @@
 import type { AgentContext, AgentPhase } from 'contracts/client';
 import type { AgentConfig } from '../config.js';
 import { readWalletSecret, requirePrivateStatePassword } from '../config.js';
+import { CliError } from '../errors.js';
 import type { Output } from '../output.js';
 import { loadClient } from './client.js';
 
@@ -19,6 +20,39 @@ export function parsePositiveAmount(value: string | undefined, label: string): b
   return BigInt(value);
 }
 
+/**
+ * Checks, before the ~5s client import and long before the multi-minute wallet sync, the two
+ * things that can be checked without a wallet. A wrong vault address or a stopped proof
+ * server used to surface eleven minutes in, after a full chain replay, which reads as a hang
+ * rather than as a configuration mistake.
+ *
+ * Deliberately only these two. Balance and DUST registration need the synced wallet, and a
+ * guess there would be worse than the honest failure.
+ */
+async function preflight(config: AgentConfig, vaultAddress: string): Promise<void> {
+  const proofServer = config.networkConfig.proofServer;
+  try {
+    await fetch(proofServer, { signal: AbortSignal.timeout(3_000) });
+  } catch {
+    throw new CliError(
+      `The proof server is not reachable at ${proofServer}.`,
+      3,
+      'Start the Midnight proof-server container and keep it bound to loopback.',
+    );
+  }
+
+  // contracts/inspect-vault reads through the indexer only: no wallet, no proof server.
+  const { readVaultState } = await import('contracts/inspect-vault');
+  const state = await readVaultState(vaultAddress, config.networkConfig);
+  if (!state) {
+    throw new CliError(
+      `No vault found at ${vaultAddress} on ${config.network}.`,
+      2,
+      'Check M402_VAULT_ADDRESS and --network. A freshly deployed vault may not be indexed yet.',
+    );
+  }
+}
+
 export async function withAgentContext<T>(
   config: AgentConfig,
   vaultAddress: string,
@@ -26,6 +60,8 @@ export async function withAgentContext<T>(
   action: (context: AgentContext) => Promise<T>,
 ): Promise<T> {
   requirePrivateStatePassword();
+  await preflight(config, vaultAddress);
+
   const spinner = output.spinner('loading wallet libraries');
   // Deliberately inside the spinner: this import takes ~5s on its own (see ./client.ts), and
   // it is the first thing the user waits on. Silence here reads as a hung CLI.

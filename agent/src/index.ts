@@ -4,6 +4,7 @@ import { parseArgs } from 'node:util';
 import { loadAgentConfig } from './config.js';
 import { callCommand } from './commands/call.js';
 import { depositCommand } from './commands/deposit.js';
+import { initCommand } from './commands/init.js';
 import { redeemCommand } from './commands/redeem.js';
 import { toCliError } from './errors.js';
 import { Output } from './output.js';
@@ -15,11 +16,17 @@ const VERSION = (JSON.parse(readFileSync(new URL('../package.json', import.meta.
 const HELP = `m402 - private agentic payments on Midnight
 
 Usage:
+  m402 init [options]
   m402 deposit <amount-star> [options]
   m402 call <gateway-url> [options]
   m402 redeem <amount-star> [options]
 
+Run 'm402 init' first. It submits nothing; it syncs the wallet and reports what you hold,
+so the one-off multi-minute sync happens when you choose rather than inside your first
+payment. Deposit EXACTLY a service's price: pay spends a whole coin and gives no change.
+
 Examples:
+  m402 init
   m402 deposit 5000 --vault 17b4cf...
   m402 call http://127.0.0.1:8787/s/a7f2
   m402 call http://127.0.0.1:8787/s/a7f2 --dry-run
@@ -54,9 +61,7 @@ function ensureSupportedNode(): void {
   }
 }
 
-function commandFrom(args: readonly string[]): string | undefined {
-  return args.find((value) => value === 'deposit' || value === 'call' || value === 'redeem');
-}
+const COMMANDS = ['init', 'deposit', 'call', 'redeem'] as const;
 
 async function main(args: string[]): Promise<void> {
   ensureSupportedNode();
@@ -92,8 +97,11 @@ async function main(args: string[]): Promise<void> {
   });
 
   const [command, argument, ...extra] = parsed.positionals;
-  if (!command || !['deposit', 'call', 'redeem'].includes(command)) {
+  if (!command || !(COMMANDS as readonly string[]).includes(command)) {
     throw new Error(`Unknown command '${command ?? ''}'. Run m402 --help.`);
+  }
+  if (command === 'init' && argument) {
+    throw new Error(`init takes no arguments; received '${argument}'.`);
   }
   if (extra.length) throw new Error(`${command} received unexpected arguments: ${extra.join(' ')}`);
 
@@ -112,6 +120,9 @@ async function main(args: string[]): Promise<void> {
   });
 
   switch (command) {
+    case 'init':
+      await initCommand(config, output);
+      break;
     case 'deposit':
       await depositCommand(argument, config, output);
       break;

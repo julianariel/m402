@@ -3,6 +3,8 @@ import { performance } from 'node:perf_hooks';
 import { WebSocket } from 'ws';
 import { CallTxFailedError, submitCallTxAsync } from '@midnight-ntwrk/midnight-js-contracts';
 import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
+import { nativeToken } from '@midnight-ntwrk/midnight-js-protocol/ledger';
+import { fromHex, toHex } from '@midnight-ntwrk/midnight-js-utils';
 import { CompiledContract } from '@midnight-ntwrk/midnight-js-protocol/compact-js';
 import type { ContractAddress } from '@midnight-ntwrk/midnight-js-protocol/compact-runtime';
 import { asContractAddress, SucceedEntirely, type ProofProvider } from '@midnight-ntwrk/midnight-js-types';
@@ -277,6 +279,41 @@ export async function depositCredit(
 export type PaymentResult = TransactionTiming & {
   receiptSecret: Uint8Array;
 };
+
+export type WalletSummary = {
+  /** True when this run resumed from the sync cache rather than replaying the chain. */
+  restoredFromCache: boolean;
+  /** Unshielded NIGHT. Deposits spend it; redeems return it. */
+  night: bigint;
+  /** Total shielded credit held. */
+  creditTotal: bigint;
+  /**
+   * Credit held as INDIVIDUAL coin values, largest first.
+   *
+   * The total on its own is misleading: `pay` asserts `coin.value == price` exactly and
+   * there is no change, so 1000 held as one 1000 coin can pay a 1000 service while the same
+   * 1000 held as two 500s cannot. Only the denominations answer "what can I actually buy".
+   */
+  creditCoins: bigint[];
+};
+
+/** Reads balances from the synced wallet. Requires no chain round-trip of its own. */
+export async function summarizeWallet(context: AgentContext): Promise<WalletSummary> {
+  const state = await Rx.firstValueFrom(context.wallet.wallet.state());
+  const creditColor = toHex(pureCircuits.creditColor({ bytes: fromHex(context.contractAddress) }));
+
+  const creditCoins = state.shielded.availableCoins
+    .filter((entry) => entry.coin.type === creditColor)
+    .map((entry) => entry.coin.value)
+    .sort((a, b) => (a > b ? -1 : a < b ? 1 : 0));
+
+  return {
+    restoredFromCache: context.wallet.restoredFromCache,
+    night: state.unshielded.balances[nativeToken().raw] ?? 0n,
+    creditTotal: state.shielded.balances[creditColor] ?? 0n,
+    creditCoins,
+  };
+}
 
 export async function hasReceipt(context: AgentContext, receipt: Uint8Array): Promise<boolean> {
   const state = await context.providers.publicDataProvider.queryContractState(context.contractAddress);

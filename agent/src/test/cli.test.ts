@@ -34,6 +34,26 @@ describe('CLI startup', () => {
     expect(elapsed).toBeLessThan(STARTUP_BUDGET_MS);
   });
 
+  it('accepts init as a command rather than rejecting it', async () => {
+    // `init` needs a wallet, so it cannot be run to completion here. What this pins down is
+    // that it reaches configuration handling at all: before it was wired into the allow-list
+    // in index.ts, it died as "Unknown command", which is the regression to catch.
+    await expect(
+      exec(TSX, [CLI, 'init'], {
+        cwd: AGENT_DIR,
+        env: { ...process.env, M402_VAULT_ADDRESS: '', M402_ENV_FILE: '/nonexistent' },
+      }),
+    ).rejects.toMatchObject({
+      stderr: expect.not.stringContaining('Unknown command'),
+    });
+  });
+
+  it('rejects arguments to init, which takes none', async () => {
+    await expect(exec(TSX, [CLI, 'init', '500'], { cwd: AGENT_DIR })).rejects.toMatchObject({
+      stderr: expect.stringContaining('init takes no arguments'),
+    });
+  });
+
   it('rejects an unknown command without loading the wallet libraries', async () => {
     const startedAt = performance.now();
     await expect(exec(TSX, [CLI, 'badcommand'], { cwd: AGENT_DIR })).rejects.toMatchObject({
