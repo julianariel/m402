@@ -44,6 +44,13 @@ export class MidnightWalletProvider implements MidnightProvider, WalletProvider 
   readonly wallet: WalletFacade;
   readonly unshieldedKeystore: UnshieldedKeystore;
 
+  /**
+   * True when this wallet was rebuilt from cached sub-wallet states and so only has to catch
+   * up. Callers use it to pick a sync deadline: a replay is minutes, a resume should be
+   * seconds, and one budget cannot be right for both.
+   */
+  readonly restoredFromCache: boolean;
+
   /** Where to persist sync state once the wallet reaches a synced state; absent = no caching. */
   private readonly syncCache: { cache: WalletCache; tag: string } | undefined;
 
@@ -54,10 +61,12 @@ export class MidnightWalletProvider implements MidnightProvider, WalletProvider 
     private readonly dustSecretKey: DustSecretKey,
     unshieldedKeystore: UnshieldedKeystore,
     syncCache?: { cache: WalletCache; tag: string },
+    restoredFromCache = false,
   ) {
     this.wallet = wallet;
     this.unshieldedKeystore = unshieldedKeystore;
     this.syncCache = syncCache;
+    this.restoredFromCache = restoredFromCache;
   }
 
   /**
@@ -217,6 +226,7 @@ export class MidnightWalletProvider implements MidnightProvider, WalletProvider 
         DustSecretKey.fromSeed(seeds.dust),
         keystore,
         { cache, tag },
+        true,
       );
     } catch (error) {
       // A cache written by an older SDK, a truncated file, a changed config shape: all mean
@@ -379,10 +389,21 @@ export async function syncWallet(
   logger: Logger,
   wallet: WalletFacade,
   timeout = 300_000,
+  onProgress?: (summary: string) => void,
 ): Promise<FacadeState> {
   logger.info('Syncing wallet...');
   let emissionCount = 0;
   const synced = wallet.state().pipe(
+      Rx.tap((state: FacadeState) => {
+        // A cold sync replays the chain and takes minutes. Without this the CLI shows a
+        // motionless spinner and looks hung, which is what a too-short deadline was papering
+        // over. Reporting the applied/target counts makes the wait legible instead.
+        onProgress?.(
+          `syncing wallet - shielded ${formatProgress(state.shielded.state.progress)}, ` +
+            `unshielded ${formatProgress(state.unshielded.progress)}, ` +
+            `dust ${formatProgress(state.dust.state.progress)}`,
+        );
+      }),
       Rx.tap((state: FacadeState) => {
         emissionCount++;
         const shielded = isProgressStrictlyComplete(state.shielded.state.progress);
