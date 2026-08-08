@@ -236,6 +236,18 @@ A successful Preview deposit measured **739 s total**: proving 27.2 s, confirmat
 roughly **710 s of wallet sync**. The chain and the prover are a rounding error; the wallet is
 the cost.
 
+Caching the sub-wallet states removes it. Two consecutive `m402 deposit 1000` runs against
+Preview, both exit 0:
+
+| run | wall clock | proof | confirm | CPU (`user`) |
+|---|---|---|---|---|
+| cold, from seed | 687.5 s | 19.6 s | 1.9 s | 643.9 s |
+| warm, restored | **53.8 s** | 17.8 s | 1.6 s | **12.4 s** |
+
+**12.8x.** Net of proving and confirmation, sync fell from ~666 s to ~34 s. The CPU time
+collapsing from 644 s to 12 s is the part that matters: that is the trial-decryption replay
+disappearing, not a faster network.
+
 The reason is that `FluentWalletBuilder` can only build from a seed, and a from-seed wallet
 starts at `appliedIndex === 0`. Both `shielded/src/v1/Sync.ts` and `dust-wallet/src/v1/Sync.ts`
 compute `resumeFrom = appliedIndex - 1n` and open the subscription with **no cursor** when that
