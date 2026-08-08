@@ -79,8 +79,8 @@ A disclosed change amount plus the public price reveals the original coin value.
 
 **Consequence.** The wallet splits off a coin worth exactly `price` before calling `pay`, so
 the paid amount always equals the published price. m402 hides **who** paid, not **how much**
-— the amount was public in `servicePrice` all along. `assert(coin.value >= price)` is still a
-real solvency check; it is not an amount-hiding mechanism.
+— the amount was public in `servicePrice` all along. `pay` asserts `coin.value == price`,
+which binds the coin to that published price; it is not an amount-hiding mechanism.
 
 ## A contract cannot hold a coin publicly
 

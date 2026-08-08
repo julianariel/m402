@@ -42,9 +42,8 @@ both amount and address.
 wallet splits off a coin worth exactly `price` — which is published in `servicePrice`.
 Returning change through the circuit does not help: the compiler reports that
 `mintShieldedToken` *"might disclose the value of a token mint"*, so a change amount plus the
-public price gives the original away. `assert(coin.value >= price)` remains a real solvency
-check — it lets the circuit accept a coin without learning which coin — but it is not an
-amount-hiding mechanism.
+public price gives the original away. `assert(coin.value == price)` binds the coin to the
+published price; it is a correctness check, not an amount-hiding mechanism.
 
 **Privacy is bounded by the anonymity set.** A payment is unlinkable only among other
 payments drawn from the pool. See [roadmap](roadmap.md#known-limitations).
@@ -116,6 +115,7 @@ export pure circuit deriveServiceId(
 
 export circuit registerService(salt: Bytes<32>, price: Uint<64>, owner: Bytes<32>): [] {
   assert(price > 0, "price must be positive");
+  assert(owner != pad(32, ""), "owner must be set");
   const serviceId = deriveServiceId(disclose(owner), disclose(salt), disclose(price));
   assert(!servicePrice.member(serviceId), "already registered");
   assert(!serviceOwner.member(serviceId), "already registered");
@@ -222,6 +222,7 @@ Cash unspent credit back to NIGHT, so an agent that over-funded is not stuck.
 
 ```compact
 export circuit redeem(recipient: Bytes<32>): [] {
+  assert(recipient != pad(32, ""), "recipient must be set");
   const coin = redeemCoin();
   assert(coin.color == tokenType(creditDomain(), kernel.self()), "not an m402 credit");
   assert(coin.value > 0, "nothing to redeem");
@@ -352,14 +353,15 @@ Registry row, covering both paths:
 ```ts
 { id, price, owner, type: "origin" | "relay",
   target: string,        // origin: proxy here · relay: pay-and-fetch here
-  chain?: string }       // CAIP-2, relay only, e.g. "eip155:8453"
+  chain?: string }       // CAIP-2, relay only — "eip155:8453" or "eip155:84532"
 ```
 
 Steps 1–3 and 5 are shared; step 4 is a two-branch switch.
 
-`chain` is a CAIP-2 identifier and the relay handler selects a viem client from it. Base is
-used for development because the x402 ecosystem is there; nothing in the design is
-Base-specific.
+`chain` is a CAIP-2 identifier, and the relay handler registers an x402 payment scheme for
+exactly that network — never a wildcard, so a service cannot induce a payment on a chain it
+did not declare. Base is used because that is where the x402 ecosystem is; nothing in the
+design is Base-specific.
 
 ## 6. Registration and explorer
 

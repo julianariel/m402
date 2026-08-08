@@ -97,7 +97,7 @@ sequenceDiagram
     A->>G: GET /s/:id
     G-->>A: 402 { serviceId, price, vaultAddress }
 
-    Note over A: prove pay() locally — ~19s<br/>no address goes into this transaction
+    Note over A: prove pay() locally — seconds<br/>no address goes into this transaction
     A->>V: submit pay() tx
     V->>V: assert colour == m402 credit
     V->>V: assert value == price
@@ -138,17 +138,26 @@ sequenceDiagram
     participant G as Gateway
     participant R as Relayer
     participant X as x402 service (EVM)
+    participant F as Facilitator
 
     Note over A,G: 402 → pay() → receipt confirmed<br/>(as above)
 
     G->>R: dispatch, type = "relay"
     R->>X: GET resource
-    X-->>R: 402 { price in USDC }
-    R->>X: pay USDC + retry
-    X-->>R: resource
+    X-->>R: 402 payment-required { amount, asset, network }
+    R->>R: drop offers above the per-request cap
+    R->>X: signed payment authorization + retry
+    X->>F: verify + settle
+    F->>F: submit the USDC transfer, pay the gas
+    X-->>R: resource + settlement receipt
     R-->>G: resource
     G-->>A: resource
 ```
+
+The relayer signs an authorization; the **facilitator** submits the transfer and pays the gas.
+The relayer therefore needs USDC but no native ETH. The settlement receipt returned with the
+resource carries the transaction hash, which is the only evidence that value actually moved —
+a `200` alone does not distinguish a settled call from a server that skipped settlement.
 
 ## Registration
 

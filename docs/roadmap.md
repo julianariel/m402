@@ -7,8 +7,9 @@ of the current build are listed at the end.
 
 ## Amortised proof generation
 
-Every API call currently generates a fresh proof, so the agent waits ~19s. Verification is
-~3.4ms — generation is the entire cost.
+Every API call generates a fresh proof. Proving `pay` is seconds and the whole
+prove-submit-confirm cycle is tens of seconds ([constraints](constraints.md#proving-cost));
+verification is ~3.4ms. Generation is the entire cost.
 
 **Approach.** Chaumian e-cash. The agent deposits once and the vault issues
 fixed-denomination notes. The wallet proves notes in the background while idle, keeping a
@@ -201,11 +202,11 @@ Current, deliberate, and documented:
   so the gateway never learns who is paying or how much.
 - **Relayable services are curated**, not arbitrary.
 - **Losing a receipt secret loses the purchase.** Only `hash(secret, serviceId)` reaches the
-  chain, so the secret is the *only* proof a payment happened. It is written to the agent's
-  private state, which is an unreplicated local LevelDB store with a hardcoded development
-  password. Delete the store and the paid-for call cannot be claimed. Accepted for the
-  hackathon; a real deployment needs the secret persisted before the transaction is
-  submitted, not after, and backed up.
+  chain, so the secret is the *only* proof a payment happened. The CLI writes it to
+  `agent/.state/<network>.json` (mode `600`) *before* the transaction is submitted, so a crash
+  between paying and claiming is recoverable and the next `call` resumes it. The file is still
+  a single unreplicated copy on one machine: delete it and the paid-for call cannot be
+  claimed. A real deployment needs it backed up.
 - **Registration is not optimistic.** `POST /services` to the gateway's registry checks
   `serviceOwner[id]` on-chain before accepting the write, and rejects with a retryable `503`
   until the `registerService` transaction is visible. This closes the gap where a client could
