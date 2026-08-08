@@ -19,7 +19,10 @@ const verify = createVerifier(
   () => registry.list().map((s) => s.id)
 );
 const checkOwnership = createOwnershipChecker(config.indexerUrl, config.indexerWsUrl, config.vaultAddress);
-const dispatch = createDispatch(dispatchOrigin, createRelayDispatcher(config.relayerKeyFile));
+const dispatch = createDispatch(
+  dispatchOrigin,
+  createRelayDispatcher(config.relayerKeyFile, config.relayerMaxPayment)
+);
 
 const app = createRoutes({
   registry,
@@ -28,6 +31,7 @@ const app = createRoutes({
   verify,
   probeOrigin: createHealthProbe(),
   checkOwnership,
+  relayTargetAllowlist: config.relayTargetAllowlist,
   dispatch,
 });
 

@@ -10,6 +10,7 @@ function testApp(overrides: Partial<RouteDeps> = {}) {
     dispatch: async () => new Response('dispatched'),
     probeOrigin: async () => true,
     checkOwnership: async () => 'match',
+    relayTargetAllowlist: new Set(['https://example.com']),
     vaultAddress: 'vault-address',
     verifyTimeoutMs: 1000,
     ...overrides,
@@ -125,6 +126,65 @@ describe('POST /services', () => {
       body: JSON.stringify({ id: 'svc1', price: '500', owner: 'o', type: 'relay', target: 'https://example.com' }),
     });
     expect(res.status).toBe(400);
+  });
+
+  it('creates an allowlisted relay service on a supported chain', async () => {
+    const { app, registry } = testApp();
+    const res = await app.request('/services', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'svc1',
+        price: '500',
+        owner: 'o',
+        type: 'relay',
+        target: 'https://example.com',
+        chain: 'eip155:84532',
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    expect(registry.get('svc1')?.type).toBe('relay');
+  });
+
+  it('rejects a relay target that the operator has not allowlisted', async () => {
+    const { app, registry } = testApp();
+    const res = await app.request('/services', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'svc1',
+        price: '500',
+        owner: 'o',
+        type: 'relay',
+        target: 'https://attacker.example/paid',
+        chain: 'eip155:84532',
+      }),
+    });
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ reason: 'relay-target-not-allowed' });
+    expect(registry.get('svc1')).toBeUndefined();
+  });
+
+  it('rejects an unsupported relay chain before registration', async () => {
+    const { app, registry } = testApp();
+    const res = await app.request('/services', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'svc1',
+        price: '500',
+        owner: 'o',
+        type: 'relay',
+        target: 'https://example.com',
+        chain: 'eip155:1',
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ reason: 'unsupported-relay-chain' });
+    expect(registry.get('svc1')).toBeUndefined();
   });
 
   it('rejects malformed JSON with 400', async () => {
