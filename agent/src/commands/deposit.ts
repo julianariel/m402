@@ -1,8 +1,8 @@
-import { depositCredit } from 'contracts/client';
 import { requireVaultAddress, type AgentConfig } from '../config.js';
 import type { Output } from '../output.js';
 import { formatDuration } from '../output.js';
 import { withOperationLock } from '../state.js';
+import { loadClient } from './client.js';
 import { parsePositiveAmount, withAgentContext } from './common.js';
 
 export async function depositCommand(
@@ -13,6 +13,8 @@ export async function depositCommand(
   const amount = parsePositiveAmount(amountArg, 'Deposit amount');
   const vaultAddress = requireVaultAddress(config);
   output.info(`Network: ${config.network} | Vault: ${vaultAddress}`);
+  // After argument and vault validation, so a bad amount fails instantly (see ./client.ts).
+  const { depositCredit } = await loadClient();
 
   const timing = await withOperationLock(config.operationLockFile, () =>
     withAgentContext(config, vaultAddress, output, (context) => depositCredit(context, amount)),

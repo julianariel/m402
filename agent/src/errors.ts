@@ -71,7 +71,9 @@ export function toCliError(error: unknown): CliError {
       cause: error,
     });
   }
-  if (/No vault configured|No wallet file configured|Unknown network|expected a 12-24 word mnemonic|private_state_password|^Password must/i.test(message)) {
+  // `No wallet file` covers both "…configured" (nothing set) and "…at <path>" (set but
+  // missing). Both are configuration errors and must exit 2, not 1.
+  if (/No vault configured|No wallet file|Unknown network|expected a 12-24 word mnemonic|private_state_password|^Password must/i.test(message)) {
     return new CliError(message, 2, undefined, { cause: error });
   }
   if (/fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT/i.test(message)) {

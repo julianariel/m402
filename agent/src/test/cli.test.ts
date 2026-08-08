@@ -12,6 +12,38 @@ const CLI = path.resolve(AGENT_DIR, 'src', 'index.ts');
 const SERVICE_ID = '11'.repeat(32);
 const VAULT_ADDRESS = '22'.repeat(32);
 
+describe('CLI startup', () => {
+  // Regression guard for the lazy `contracts/client` import (see src/commands/client.ts).
+  //
+  // That module costs ~5.2s to load, nearly all of it @midnight-ntwrk/testkit-js. It used to
+  // be imported at module scope, so `m402 --version` took 8.5-9.1s under tsx and a mistyped
+  // command took 6s to say so. Loading it at the point of use brought this to ~0.7-1.1s.
+  //
+  // The budget is deliberately loose: tsx alone costs ~0.4-0.65s before any of our code runs,
+  // and this must not become the flaky test it replaced. 4s is ~4x the measured time while
+  // still failing loudly if a top-level `import ... from 'contracts/client'` comes back
+  // anywhere in the startup graph, which would put this back over 8s.
+  const STARTUP_BUDGET_MS = 4_000;
+
+  it('answers --version without loading the wallet libraries', async () => {
+    const startedAt = performance.now();
+    const { stdout } = await exec(TSX, [CLI, '--version'], { cwd: AGENT_DIR });
+    const elapsed = performance.now() - startedAt;
+
+    expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(elapsed).toBeLessThan(STARTUP_BUDGET_MS);
+  });
+
+  it('rejects an unknown command without loading the wallet libraries', async () => {
+    const startedAt = performance.now();
+    await expect(exec(TSX, [CLI, 'badcommand'], { cwd: AGENT_DIR })).rejects.toMatchObject({
+      stderr: expect.stringContaining("Unknown command 'badcommand'"),
+    });
+
+    expect(performance.now() - startedAt).toBeLessThan(STARTUP_BUDGET_MS);
+  });
+});
+
 describe('CLI', () => {
   let gateway: MockGateway | undefined;
 

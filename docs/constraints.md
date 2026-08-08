@@ -197,6 +197,50 @@ A rejected submission also never settles its promise — it waits for a confirma
 never comes. Wrap concurrent submissions in a timeout, or the test hangs instead of
 reporting.
 
+## The wallet builder lives in a test package, and it costs five seconds to import
+
+`contracts/src/lib/wallet.ts` builds the wallet with `FluentWalletBuilder` from
+**`@midnight-ntwrk/testkit-js`**. That is the documented way to assemble a `WalletFacade`, but
+it means a test-harness package sits in the production dependency graph, and it is expensive.
+
+Measured on Node 24 in this repo, cold, `--version` only:
+
+| import | cost |
+|---|---|
+| bare `node -e 0` | 0.11 s |
+| `contracts/pure` (all the gateway needs) | 0.20 s |
+| `contracts/lib/config` | 0.11 s |
+| **`contracts/client`** | **5.20 s** |
+| └ `@midnight-ntwrk/testkit-js` alone | **5.65 s** |
+
+testkit-js alone accounts for essentially all of `contracts/client`. This is not "the Midnight
+SDK is slow" — the gateway imports `contracts/pure` and pays 0.20 s.
+
+Two consequences:
+
+- **Import it lazily from the CLI.** `agent/src/commands/client.ts` loads `contracts/client` at
+  the point of use, so `--version`, `--help`, a mistyped command and `call --dry-run` never pay
+  for a wallet builder they do not call. Before this, `m402 badcommand` took 6.01 s to print
+  "Unknown command". `agent/src/test/cli.test.ts` asserts the startup budget so a top-level
+  import cannot creep back.
+- **The cost does not disappear**, it moves. `deposit`, `redeem` and a real `call` still pay it,
+  which is why `withAgentContext` shows a spinner across the import rather than sitting silent.
+
+Removing testkit-js from the runtime path means rebuilding wallet construction directly on
+`@midnight-ntwrk/wallet-sdk`. Worth doing; not worth doing the day of a demo, since it only
+saves ~5 s on commands that already spend 30–60 s syncing.
+
+## Paths in `agent/.env` are relative to that file
+
+`readFileSync` resolves a relative path against the process's working directory, not against
+the env file that supplied it. `MIDNIGHT_PREVIEW_MNEMONIC_FILE=.mnemonic` therefore worked when
+run from `agent/` and failed from the repo root with `ENOENT: open '.mnemonic'`, which names
+neither the file it wanted nor where it looked.
+
+`loadAgentConfig` now resolves env-file-sourced paths against `path.dirname(envFile)`, while
+`--mnemonic-file` and `--state-file` still resolve against the working directory, as a CLI
+flag should. `readWalletSecret` reports the resolved absolute path on ENOENT.
+
 ## Node version
 
 The Midnight SDK's ESM exports fail to resolve on Node 23 and Node 26. **Node 22 or 24 only.**
