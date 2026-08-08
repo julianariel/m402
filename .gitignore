@@ -37,3 +37,4 @@ midnight-level-db/
 .DS_Store
 .idea/
 *.swp
+.vercel
