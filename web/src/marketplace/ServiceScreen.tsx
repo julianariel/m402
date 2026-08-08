@@ -5,12 +5,14 @@ import { CodeBlock, FlowStep, HashChip, PriceTag } from '../components/protocol'
 import { SERVICES, type Service } from './data';
 
 /**
- * Illustrative — the real nullifier/receipt sets are on-chain but decoding them into
- * this shape needs the compiled contract (see contracts/README.md). What's real here is
- * the UX claim itself: a nullifier proves a payment happened; amount and payer never
- * appear, in mock data or in the real thing.
+ * Illustrative — the real `receipts` set is on-chain but decoding it into this shape
+ * needs the compiled contract wired into this screen (see contracts/src/pure.ts, added
+ * upstream). The contract has no nullifier — Zswap already prevents double-spending a
+ * coin, so an earlier nullifier set was removed as redundant. What's real here is the
+ * UX claim: a receipt hash proves a payment happened; amount and payer never appear,
+ * in mock data or in the real thing.
  */
-const RECENT_NULLIFIERS = [
+const RECENT_RECEIPTS = [
   '7f3a9c1e5b8d2046af7c3e91b5d8a042f6c9e1b7a3d5f8092c4e6a1b9d3f7082',
   '2c8e5a91d4f7b036e9a1c5d8f2b4076a3e9c1f5b8d206479a3c5e8b1d4f7902c',
   '9b4d7f1a3c8e502691b5d9f3a7c108e4b6d9a1c3f5e802b7d4a9c1e6f3b80572',
@@ -78,17 +80,17 @@ export function ServiceScreen({ slug, onBack }: ServiceScreenProps) {
               recent activity
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-              {RECENT_NULLIFIERS.map((n) => (
+              {RECENT_RECEIPTS.map((n) => (
                 <div key={n} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                  <HashChip label="nullifier" value={n} tone="public" head={8} tail={4} copyable={false} />
-                  <Tooltip content="Payer and amount are witnesses. A nullifier proves a payment happened — never who made it or for how much.">
+                  <HashChip label="receipt" value={n} tone="public" head={8} tail={4} copyable={false} />
+                  <Tooltip content="Payer and amount are witnesses. A receipt hash proves a payment happened — never who made it or for how much.">
                     <span><PriceTag usd="" star="" hidden /></span>
                   </Tooltip>
                 </div>
               ))}
             </div>
             <p style={{ margin: 'var(--space-4) 0 0', font: 'var(--fw-regular) var(--fs-caption)/1.5 var(--font-body)', color: 'var(--text-faint)' }}>
-              Illustrative — the real nullifier set is on-chain, but decoding it needs the compiled contract, which this build doesn't ship.
+              Illustrative — the real <code style={{ fontFamily: 'var(--font-mono)' }}>receipts</code> set is on-chain, but decoding it needs the compiled contract wired into this screen.
             </p>
           </Card>
 
@@ -110,7 +112,7 @@ export function ServiceScreen({ slug, onBack }: ServiceScreenProps) {
               <div>
                 <FlowStep index={1} title="402 with requirements" detail="serviceId, price, vault address." state="done" privacy="public" />
                 <FlowStep index={2} title="Prove pay() locally" detail="coin.value never leaves this machine." state={stateFor(1)} privacy="private" />
-                <FlowStep index={3} title="Nullifier on the indexer" detail="Verification ~3.4ms." state={stateFor(2)} privacy="public" />
+                <FlowStep index={3} title="Receipt on the indexer" detail="Verification ~3.4ms." state={stateFor(2)} privacy="public" />
                 <FlowStep index={4} title="Resource returned" state={step === 3 ? 'done' : 'pending'} last />
               </div>
               <Button
