@@ -209,7 +209,7 @@ proxying to a merchant API:
 | service | origin, 50 STAR |
 | URL called | the gateway's public `cloudflared` URL, not loopback — `https://<tunnel>/s/<id>` |
 | agent timings | proof 1.4s · submit 22.5s · chain 1.5s · gateway 3.3s (34.1s wall clock) |
-| agent credit | 450 → 400 STAR |
+| agent credit | 450 → 400 mSTAR |
 | agent NIGHT | unchanged |
 | result | HTTP 200, the origin's JSON body on stdout |
 
