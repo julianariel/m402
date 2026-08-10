@@ -1,6 +1,7 @@
 {
   "name": "m402",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "engines": {
     "node": "22.x || 24.x"
