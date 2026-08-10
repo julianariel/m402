@@ -132,3 +132,23 @@ Known limitations are documented rather than hidden — see
 - Docker, for the local proof server on `:6300`
 - Lace wallet, for merchant registration and withdrawal
 - tNIGHT from the Preview faucet, to deposit against
+
+## Credits
+
+![The m402 team receiving the Open Track prize at Hack Buenos Aires](docs/media/hack-buenos-aires-winners.jpg)
+
+**Open Track, 1st place — Hack Buenos Aires, 8 August 2026.**
+
+Built by [Julián Ariel Martínez](https://www.linkedin.com/in/julianariel94/),
+[Martín Lecam](https://www.linkedin.com/in/martin-guillermo-lecam/) and
+[Sebastián Rosenberg](https://www.linkedin.com/in/sebastian-rosenberg/).
+
+Thank you to [Midnight](https://midnight.network) and the Hack Buenos Aires organisers for
+putting on the event, and to the Midnight team for being there through the weekend. Their
+mentoring, and how quickly they answered questions, is a large part of why this got as far as
+it did.
+
+| | |
+|---|---|
+| Pitch video | [`docs/media/m402-pitch.mp4`](docs/media/m402-pitch.mp4) |
+| Deck | [`docs/media/m402-pitch.pptx`](docs/media/m402-pitch.pptx) |
