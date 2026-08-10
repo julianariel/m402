@@ -381,7 +381,9 @@ lives in the gateway's registry. Registration is first-come and immutable — `M
 overwrites, so without that guard anyone could re-register a `serviceId` with themselves as
 owner and redirect the merchant's revenue.
 
-A dev CLI registers services directly from a headless wallet, for testing and automation.
+Headless registration exists as a library function, not as a command: `contracts/src/client.ts`
+exports `registerService`, which `deploy.test.ts` calls against a real Preview vault. The web
+UI is the only registration surface an operator has.
 
 `registerService` costs a proof, and `POST /services` to the gateway's own registry is a
 **separate** call the web UI makes after it — the contract never stores the URL. The gateway

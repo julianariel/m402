@@ -7,18 +7,25 @@ of the current build are listed at the end.
 
 ## Amortised proof generation
 
-Every API call generates a fresh proof. Proving `pay` is seconds and the whole
-prove-submit-confirm cycle is tens of seconds ([constraints](constraints.md#proving-cost));
-verification is ~3.4ms. Generation is the entire cost.
+Every API call puts a transaction on chain, and the whole prove-submit-confirm cycle is tens
+of seconds ([constraints](constraints.md#proving-cost)); verification is ~3.4ms.
+
+**Where the time actually goes matters for the fix.** A `pay` measured on 2026-08-08 split as
+proof 1.4s, submit 22.5s, chain 1.5s. Proving is the smallest of the three. Pre-proving alone
+would therefore save under two seconds of twenty-five — the win has to come from taking the
+on-chain round trip off the per-call path, not from making the proof cheaper.
 
 **Approach.** Chaumian e-cash. The agent deposits once and the vault issues
 fixed-denomination notes. The wallet proves notes in the background while idle, keeping a
-buffer of spend-ready notes. At call time it presents an already-proven note and a nullifier.
-Per-call latency drops to the verification cost with no loss of privacy — every call still
-carries a real proof.
+buffer of spend-ready notes. At call time it presents an already-proven note, and the gateway
+takes the note itself as payment instead of waiting for a receipt to appear on chain. Privacy
+is unchanged — every call still carries a real proof.
 
 **Cost.** Note denomination logic, buffer refill management, a larger nullifier set. One
-additional circuit and a wallet change.
+additional circuit and a wallet change. The settlement model changes with it: the gateway
+would have to redeem collected notes in a batch, which makes it a party to settlement rather
+than a pure reader of chain state — the property [design.md](design.md#5-gateway) currently
+relies on.
 
 ## Arbitrary-URL relaying
 
@@ -105,12 +112,16 @@ mode to the most critical flow.
 ## Merchant onboarding without Lace
 
 Merchants must connect Lace to register. This keeps the gateway a pure read-and-proxy service
-with no wallet and no DUST of its own, and merchants need a Midnight wallet regardless in
-order to withdraw.
+with no wallet and no DUST of its own.
+
+Registration is the only step that needs the merchant's own wallet. `withdraw` authenticates
+nobody and reads its payout address from `serviceOwner`, so anyone can trigger a merchant's
+payout and the funds still reach the registered address —
+`contracts/src/withdraw-balance.ts` does exactly that from a headless wallet.
 
 **Approach.** A gateway-sponsored registration path where the gateway pays DUST and the
-merchant address remains the owner. Still non-custodial — withdrawal always requires proving
-ownership.
+merchant address remains the owner. Still non-custodial: the gateway never becomes the owner,
+and the payout destination stays the address recorded at registration.
 
 ## Middleware instead of a proxy
 
@@ -152,8 +163,9 @@ Current, deliberate, and documented:
 
 - **Merchant call volume is public.** Payers are not.
 - **The amount paid is public**, because it equals the published `price`. m402 hides who
-  paid, not how much. A shielded amount cannot be returned as change — see
-  [constraints](constraints.md#a-shielded-amount-cannot-be-returned-as-change).
+  paid, not how much. `pay` receives a coin worth exactly `price`; the wallet's balancer
+  splits a larger coin and takes the change back, so this is not a limit on what a deposit
+  can buy — see [constraints](constraints.md#the-pay-circuit-cannot-mint-its-own-change).
 - **Concurrent throughput is unmeasured.** A security review argued that writes to a
   contract conflict contract-wide rather than per key, which would cap a vault at about one
   transaction per block. It stays unmeasured because one wallet cannot submit two

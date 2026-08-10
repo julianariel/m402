@@ -44,6 +44,11 @@ m402 redeem 1000 --yes
 registered services it can see, so the one-off multi-minute sync happens when you choose
 rather than inside your first payment. Run it first.
 
+Each service is marked `payable` or `short by N` against the credit **total**, not against a
+matching denomination — the wallet's balancer splits a larger coin and takes the change, so
+one deposit covers many calls. The per-coin values are printed to explain what makes up the
+balance, not to gate what you can buy.
+
 `deposit` and `redeem` require the configured vault. `call` reads the vault from the
 gateway's HTTP 402 response and refuses a mismatch with `M402_VAULT_ADDRESS` unless
 `--allow-other-vault` is explicitly supplied.

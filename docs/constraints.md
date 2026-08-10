@@ -26,6 +26,12 @@ most of it is fixed overhead, and a heavier circuit will not be proportionally s
 These are prove **plus submit plus confirm**. Quote them that way, or split the phases — the
 ~3.4ms verification figure is not comparable to them.
 
+Split, on a `pay` measured through the gateway on 2026-08-08: **proof 1.4s, submit 22.5s,
+chain 1.5s**. Submission dominates, and proving — the part that sounds expensive — is under
+two seconds. That is the same finding as the ~19s floor above, seen per phase instead of in
+aggregate: attributing the whole 25s to "generating a zero-knowledge proof" is wrong by an
+order of magnitude.
+
 **Consequence.** One proof per API call is the accepted cost of this design. Proving happens
 on the agent's machine; verification is effectively free. Amortising proof generation is
 tracked in the [roadmap](roadmap.md).
@@ -65,10 +71,10 @@ caller. m402 sidesteps this by paying merchants in **unshielded** NIGHT via `sen
 which takes a `UserAddress` and has no such restriction — so `withdraw` can pay the address
 recorded at registration regardless of who calls it.
 
-## A shielded amount cannot be returned as change
+## The `pay` circuit cannot mint its own change
 
-`pay` consumes the whole credit coin. Returning the difference through the circuit does not
-work: the compiler rejects an undisclosed mint with
+`pay` consumes the whole coin it receives. Returning the difference **from inside the
+circuit** does not work: the compiler rejects an undisclosed mint with
 
 ```
 the call to standard-library circuit mintShieldedToken might disclose the value of
@@ -77,10 +83,20 @@ a token mint given by the result of a subtraction involving the witness value
 
 A disclosed change amount plus the public price reveals the original coin value.
 
-**Consequence.** The wallet splits off a coin worth exactly `price` before calling `pay`, so
-the paid amount always equals the published price. m402 hides **who** paid, not **how much**
-— the amount was public in `servicePrice` all along. `pay` asserts `coin.value == price`,
-which binds the coin to that published price; it is not an amount-hiding mechanism.
+**This is a constraint on the circuit, not on the wallet.** Change still comes back, one
+layer down: the wallet's balancer splits a larger coin, sends `price` to the vault and the
+remainder back to the payer in the same transaction, and the change output's value stays
+hidden. So **one deposit funds many calls**, and payability is `creditTotal >= price` rather
+than a denomination match. `deploy.test.ts` settles it on Preview — deposit 5000 once, pay
+500 three times, then assert the remainder is 3500 and redeem it.
+
+Read the two layers separately or the constraint sounds like a spending limit. It is not one;
+it only says which layer does the splitting.
+
+**Consequence.** `pay` always receives a coin worth exactly `price`, so the paid amount always
+equals the published price. m402 hides **who** paid, not **how much** — the amount was public
+in `servicePrice` all along. `pay` asserts `coin.value == price`, which binds the coin to that
+published price; it is not an amount-hiding mechanism.
 
 ## A contract cannot hold a coin publicly
 
