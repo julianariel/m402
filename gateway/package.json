@@ -20,8 +20,7 @@
     "contracts": "*",
     "hono": "^4.6.7",
     "viem": "^2.55.11",
-    "ws": "^8.21.3",
-    "x402-fetch": "^1.2.0"
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.11",
