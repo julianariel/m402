@@ -308,6 +308,19 @@ recovered by differencing it.
 Credits are denominated in STAR, one-for-one with the NIGHT backing them, so a price stored
 in `servicePrice` means the same amount of value whichever side of the deposit you are on.
 
+**Major and minor units.** `servicePrice`, `merchantBalance`, and every deposit/redeem amount
+are raw ledger integers — atomic units, no decimal point. **mSTAR** and **mNIGHT** name that
+atomic precision, and describe *only the vault-minted credit*: mSTAR is the exact atomic
+credit count (1 mSTAR = 1 STAR, same number the ledger already stores), and mNIGHT is that
+same amount rescaled to its NIGHT-equivalent for legibility (1 mNIGHT = 1 NIGHT-worth of
+value = 1,000,000 mSTAR). `formatAtomic` in `@m402/shared` renders both together, e.g.
+`5,000 mSTAR (0.005 mNIGHT)` — used for a deposit's resulting credit balance and a
+redemption's input amount, the two places an agent enters or receives an exact credit count.
+
+**NIGHT and STAR remain the native reserve, payout, and price denominations everywhere
+else** — service prices, merchant balances, withdrawals, and a deposit's native NIGHT input
+all stay labelled `STAR`/`NIGHT`, unscaled, exactly as before this section was written.
+
 Prices are entered and displayed in **USD**, settled in **credits**:
 
 - the merchant enters a USD price at registration

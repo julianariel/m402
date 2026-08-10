@@ -19,7 +19,7 @@ Usage:
   m402 init [options]
   m402 deposit <amount-star> [options]
   m402 call <gateway-url> [options]
-  m402 redeem <amount-star> [options]
+  m402 redeem <amount-mstar> [options]
 
 Run 'm402 init' first. It submits nothing; it syncs the wallet and reports what you hold,
 so the one-off multi-minute sync happens when you choose rather than inside your first

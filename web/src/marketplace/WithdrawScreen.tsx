@@ -21,6 +21,13 @@ type LedgerState =
 
 type WithdrawPhase = { kind: 'idle' } | { kind: TxPhase } | { kind: 'done'; txId: string } | { kind: 'error'; message: string };
 
+// withdraw() is confirmed on-chain (submit() in chain/circuits.ts already awaited
+// watchForTxData) before this fires, but queryContractState is a separate indexer read path
+// that can lag a beat behind confirmation — the same class of lag PublishScreen's gateway
+// retry and http.ts's claimService retry already work around. Poll until the balance actually
+// moves, or give up and show whatever the last read was.
+const BALANCE_REFRESH_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000];
+
 const columns: DataColumn<OwnedServiceRow>[] = [
   { key: 'id', label: 'Service id', render: (r) => <span style={{ font: 'var(--text-code)', color: 'var(--text-primary)' }}>{r.id.slice(0, 16)}…</span> },
   { key: 'amounts', label: 'Amounts paid', render: () => <PriceTag usd="" star="" hidden /> },
@@ -35,38 +42,69 @@ export function WithdrawScreen() {
   const [ledgerState, setLedgerState] = useState<LedgerState>({ phase: 'loading' });
   const [amount, setAmount] = useState('');
   const [phase, setPhase] = useState<WithdrawPhase>({ kind: 'idle' });
+  const [refreshingBalance, setRefreshingBalance] = useState(false);
+
+  /** One read of merchantBalance/serviceOwner for `ownerBytes`. Throws on a provider error so
+   * callers decide for themselves whether that means "show an error" or "just try again". */
+  const readBalance = useCallback(async (owner: Uint8Array): Promise<{ ownedServiceIds: Uint8Array[]; balance: bigint }> => {
+    const ledger = await fetchVaultLedger(VAULT_ADDRESS);
+    if (!ledger) return { ownedServiceIds: [], balance: 0n };
+    const ownedServiceIds = servicesOwnedBy(ledger, owner);
+    const balance = ledger.merchantBalance.member(owner) ? ledger.merchantBalance.lookup(owner) : 0n;
+    return { ownedServiceIds, balance };
+  }, []);
 
   const reload = useCallback(() => {
     if (!ownerBytes) return;
     setLedgerState({ phase: 'loading' });
-    fetchVaultLedger(VAULT_ADDRESS)
-      .then((ledger) => {
-        if (!ledger) {
-          setLedgerState({ phase: 'loaded', ownedServiceIds: [], balance: 0n });
-          return;
-        }
-        const ownedServiceIds = servicesOwnedBy(ledger, ownerBytes);
-        const balance = ledger.merchantBalance.member(ownerBytes) ? ledger.merchantBalance.lookup(ownerBytes) : 0n;
+    readBalance(ownerBytes)
+      .then(({ ownedServiceIds, balance }) => {
         setLedgerState({ phase: 'loaded', ownedServiceIds, balance });
         setAmount(balance.toString());
       })
       .catch((err) => setLedgerState({ phase: 'error', message: err instanceof Error ? err.message : 'Failed to read the vault.' }));
-  }, [ownerBytes]);
+  }, [ownerBytes, readBalance]);
 
   useEffect(() => { reload(); }, [reload]);
 
+  /** Polls readBalance until it differs from `previousBalance` or the retry budget above runs
+   * out — the indexer's read path can briefly lag a withdrawal that already confirmed. Every
+   * intermediate read is still shown, so the UI never sits frozen on a stale number. */
+  async function refreshUntilChanged(owner: Uint8Array, previousBalance: bigint): Promise<void> {
+    setRefreshingBalance(true);
+    try {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const { ownedServiceIds, balance } = await readBalance(owner);
+          setLedgerState({ phase: 'loaded', ownedServiceIds, balance });
+          setAmount(balance.toString());
+          if (balance !== previousBalance) return;
+        } catch (err) {
+          setLedgerState({ phase: 'error', message: err instanceof Error ? err.message : 'Failed to read the vault.' });
+          return;
+        }
+        const delay = BALANCE_REFRESH_DELAYS_MS[attempt];
+        if (delay === undefined) return;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    } finally {
+      setRefreshingBalance(false);
+    }
+  }
+
   async function handleWithdraw() {
-    if (ledgerState.phase !== 'loaded' || !providers || ledgerState.ownedServiceIds.length === 0) return;
+    if (ledgerState.phase !== 'loaded' || !providers || !ownerBytes || ledgerState.ownedServiceIds.length === 0) return;
     const amountStar = BigInt(amount || '0');
     if (amountStar <= 0n || amountStar > ledgerState.balance) {
       setPhase({ kind: 'error', message: `Amount must be between 1 and ${ledgerState.balance} STAR.` });
       return;
     }
+    const previousBalance = ledgerState.balance;
     setPhase({ kind: 'proving' });
     try {
       const { txId } = await withdrawBalance(providers, VAULT_ADDRESS, ledgerState.ownedServiceIds[0], amountStar, (p) => setPhase({ kind: p }));
       setPhase({ kind: 'done', txId });
-      reload();
+      await refreshUntilChanged(ownerBytes, previousBalance);
     } catch (err) {
       setPhase({ kind: 'error', message: err instanceof Error ? err.message : 'Withdrawal failed.' });
     }
@@ -153,7 +191,12 @@ export function WithdrawScreen() {
                 <div style={{ font: 'var(--fw-regular) var(--fs-caption)/1.6 var(--font-body)', color: 'var(--text-muted)' }}>
                   withdraw() confirmed. NIGHT was sent to the address recorded at registration.
                 </div>
-                <Button variant="secondary" size="sm" onClick={() => setPhase({ kind: 'idle' })}>Withdraw more</Button>
+                {refreshingBalance && (
+                  <StatusDot tone="confirming" label="waiting for the indexer to catch up…" />
+                )}
+                <Button variant="secondary" size="sm" disabled={refreshingBalance} onClick={() => setPhase({ kind: 'idle' })}>
+                  Withdraw more
+                </Button>
               </div>
             ) : (
               <>

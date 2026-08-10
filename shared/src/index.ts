@@ -52,3 +52,23 @@ export const USD_TO_STAR_RATE = 50_000;
 export function usdToStar(usd: number): bigint {
   return BigInt(Math.round(usd * USD_TO_STAR_RATE));
 }
+
+/**
+ * mSTAR/mNIGHT describe only the vault-minted credit (design.md §4) — never native NIGHT,
+ * which stays denominated in plain NIGHT/STAR everywhere (a deposit's native input, a
+ * withdrawal, the pooled reserve). mSTAR is the credit's exact atomic count — the same raw
+ * integer the ledger already stores. mNIGHT is that amount rescaled for legibility: the
+ * NIGHT-equivalent value of holding it, at 1,000,000 mSTAR per mNIGHT.
+ */
+export const MSTAR_PER_MNIGHT = 1_000_000n;
+
+/**
+ * Exact atomic amount, with its mNIGHT-equivalent alongside for scale:
+ * formatAtomic(5000n) -> "5,000 mSTAR (0.005 mNIGHT)".
+ */
+export function formatAtomic(amount: bigint): string {
+  const whole = amount / MSTAR_PER_MNIGHT;
+  const frac = amount % MSTAR_PER_MNIGHT;
+  const fraction = frac === 0n ? '' : `.${frac.toString().padStart(6, '0').replace(/0+$/, '')}`;
+  return `${amount.toLocaleString()} mSTAR (${whole}${fraction} mNIGHT)`;
+}

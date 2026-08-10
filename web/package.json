@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "predev": "node scripts/copy-zk-assets.mjs",
+    "predev": "npm run build -w contracts && node scripts/copy-zk-assets.mjs",
     "dev": "vite",
-    "prebuild": "node scripts/copy-zk-assets.mjs",
+    "prebuild": "npm run build -w contracts && node scripts/copy-zk-assets.mjs",
     "build": "vite build",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"

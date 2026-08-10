@@ -45,17 +45,22 @@ async function submit<PCK extends VaultCircuits>(
 
 export type RegisterServiceArgs = { salt: Uint8Array; price: bigint; owner: Uint8Array };
 
-/** Submits registerService(salt, price, owner) and derives the resulting serviceId locally — the
- * same pure computation the contract itself does, so the caller knows the id before any indexer
- * round trip (needed to then POST /services to the gateway). */
+/** Submits registerService(salt, price, owner). serviceId is derived locally — the same pure
+ * computation the contract itself does, needing no proof and no wallet — so it's known and
+ * handed to `onServiceId` before proving even starts. This lets the caller show the resulting
+ * m402 URL immediately, badged "confirming", rather than waiting the ~22-28s that proving,
+ * submitting and confirming take (docs/constraints.md#proving-cost). */
 export async function registerServiceOnChain(
   providers: M402Providers,
   contractAddress: string,
   args: RegisterServiceArgs,
   onPhase?: (phase: TxPhase) => void,
+  onServiceId?: (serviceId: Uint8Array) => void,
 ): Promise<{ txId: string; serviceId: Uint8Array }> {
+  const serviceId = pureCircuits.deriveServiceId(args.owner, args.salt, args.price);
+  onServiceId?.(serviceId);
   const { txId } = await submit(providers, contractAddress, 'registerService', [args.salt, args.price, args.owner], onPhase);
-  return { txId, serviceId: pureCircuits.deriveServiceId(args.owner, args.salt, args.price) };
+  return { txId, serviceId };
 }
 
 /** Submits pay(serviceId). Generates a fresh receipt secret and stashes it in private state
