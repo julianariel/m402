@@ -32,6 +32,54 @@ npx tsx src/deploy-vault.ts
 Five state circuits: `registerService`, `deposit`, `pay`, `redeem`, `withdraw`. See
 [`../docs/design.md`](../docs/design.md#3-contract--m402vaultcompact).
 
+## Scripts
+
+| Script | Needs a wallet? | What it does |
+|---|---|---|
+| `src/deploy-vault.ts` | yes | Deploys a new persistent vault (above) |
+| `src/inspect-vault.ts` | **no** | Prints a vault's public state from the indexer |
+| `src/withdraw-balance.ts` | yes | Claims a merchant balance from a headless wallet |
+
+### `inspect-vault.ts` — read the vault without a wallet
+
+```bash
+MIDNIGHT_NETWORK=preview M402_VAULT_ADDRESS=<hex> npx tsx src/inspect-vault.ts
+MIDNIGHT_NETWORK=preview npx tsx src/inspect-vault.ts <hex>
+```
+
+No mnemonic and no proof server — only the indexer. It goes through `contracts/pure` (0.20 s
+to import) rather than `contracts/client` (5.2 s plus minutes of wallet sync), so it answers
+in well under a second and is usable as a before/after check around every step of a run, or
+live during a demo. It prints `mintCounter`, the receipt count, every registered service and
+every merchant balance.
+
+Everything it prints is public. **The privacy claim is visible here as an absence: there is
+no payer column to print.**
+
+`agent`'s `init` imports `readVaultState` from it rather than duplicating the read.
+
+### `withdraw-balance.ts` — claim a merchant balance headlessly
+
+```bash
+MIDNIGHT_NETWORK=preview \
+MIDNIGHT_PREVIEW_MNEMONIC_FILE=/path/to/.mnemonic \
+M402_VAULT_ADDRESS=<hex> \
+npx tsx src/withdraw-balance.ts <serviceId-hex> <amount-star>
+```
+
+For a merchant whose wallet extension cannot build the transaction. This is safe to run from
+any wallet because `withdraw` reads its payout address from `serviceOwner` and authenticates
+nobody — the NIGHT reaches the merchant who registered the service no matter who submits, so
+the submitting wallet pays the DUST and gets nothing. It cannot redirect funds.
+
+The mnemonic is read from a **file**. Never pass the words in argv or an env var; both leak
+through `ps` and shell history. `M402_ENV_FILE` loads `agent/.env` through Node's own
+`loadEnvFile` rather than a shell `source`, because a shell expands `$` and backticks inside a
+value and corrupts a password with no error.
+
+Point `MIDNIGHT_SYNC_CACHE_DIR` at the agent CLI's directory to resume from its warm cache: a
+cold replay of a wallet is minutes, a warm resume is seconds.
+
 Three **exported pure circuits** are the off-chain interface. They need no proof and no
 wallet, so the gateway, the web app and an auditor call them directly through
 `pureCircuits`. Never reimplement these hashes — a local copy that drifts produces an id or

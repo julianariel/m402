@@ -57,6 +57,7 @@ file that touches Hono.
 | File | Responsibility |
 |---|---|
 | `config.ts` | Reads env once |
+| `node-version.ts` | Fails fast on an unsupported Node — `better-sqlite3` is native, and its version mismatch otherwise surfaces as failing gateway tests rather than as a wrong-Node error |
 | `routes.ts` | HTTP surface — `/s/:id`, `/services`; owns the `VerifyResult`/`Verify`/`Dispatch`/`ProbeOrigin` contracts |
 | `registry.ts` | SQLite-backed `serviceId → { price, owner, type, target, chain }` |
 | `receipt.ts` | `deriveReceipt(secret, serviceId)` — re-exported from `contracts/pure`'s compiled `pureCircuits`, never hand-rolled |
@@ -196,10 +197,30 @@ Two properties of `createRelayDispatcher` are load-bearing:
 
 ## Verified against live networks
 
-Measured 2026-08-08 against Midnight Preview and Base Sepolia.
+Measured 2026-08-08 against Midnight Preview and Base Sepolia. **Both dispatch paths have run
+end to end against the live network** — one through a public tunnel to an origin API, one out
+to an external x402 service on Base Sepolia.
 
-**The joined flow** — one `m402 call` that pays on Midnight and relays to an external x402
-service — completed end to end:
+**The origin path** — one `m402 call` through the public gateway URL, paying on Midnight and
+proxying to a merchant API:
+
+| | |
+|---|---|
+| service | origin, 50 STAR |
+| URL called | the gateway's public `cloudflared` URL, not loopback — `https://<tunnel>/s/<id>` |
+| agent timings | proof 1.4s · submit 22.5s · chain 1.5s · gateway 3.3s (34.1s wall clock) |
+| agent credit | 450 → 400 STAR |
+| agent NIGHT | unchanged |
+| result | HTTP 200, the origin's JSON body on stdout |
+
+The credit moving 450 → 400 and coming back as a single 400 coin is the coin-splitting proof
+in the field: exactly `price` was spent from a coin nine times its size, and the remainder
+returned as change. NIGHT not moving is the other half — payments spend shielded credit only,
+so the pooled reserve does not move on a payment (see
+[`../docs/constraints.md`](../docs/constraints.md#the-pay-circuit-cannot-mint-its-own-change)).
+
+**The relay path** — one `m402 call` that pays on Midnight and relays to an external x402
+service:
 
 | | |
 |---|---|
