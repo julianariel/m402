@@ -144,9 +144,7 @@ Built by [Julián Ariel Martínez](https://www.linkedin.com/in/julianariel94/),
 [Sebastián Rosenberg](https://www.linkedin.com/in/sebastian-rosenberg/).
 
 Thank you to [Midnight](https://midnight.network) and the Hack Buenos Aires organisers for
-putting on the event, and to the Midnight team for being there through the weekend. Their
-mentoring, and how quickly they answered questions, is a large part of why this got as far as
-it did.
+putting on the event, and to the Midnight team for being there through the weekend.
 
 | | |
 |---|---|
