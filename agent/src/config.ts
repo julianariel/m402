@@ -23,6 +23,7 @@ export type ConfigOverrides = {
   vaultAddress?: string;
   mnemonicFile?: string;
   stateFile?: string;
+  gatewayUrl?: string;
 };
 
 export type AgentConfig = {
@@ -35,7 +36,13 @@ export type AgentConfig = {
   midnightDbName: string;
   syncCacheDir: string;
   configFile: string;
+  gatewayUrl: string;
 };
+
+// Where npm-installed m402 points by default. Depends on Part C's Railway deployment and
+// m402.xyz domain landing; until then, override with --gateway / M402_GATEWAY_URL for local
+// dev against `npm run dev --workspace=gateway` (http://localhost:8787).
+const DEFAULT_GATEWAY_URL = 'https://gw.m402.xyz';
 
 function optional(value: string | undefined): string | undefined {
   const normalized = value?.trim();
@@ -63,6 +70,7 @@ function resolveConfigDir(): string {
 
 type M402ConfigFile = {
   privateStatePassword?: string;
+  gateway?: string;
 };
 
 function readM402ConfigFile(configFile: string): M402ConfigFile {
@@ -170,6 +178,21 @@ function resolveMnemonicFile(
   return path.join(stateDir, `${network}.mnemonic`);
 }
 
+/** --gateway flag > M402_GATEWAY_URL > config.json's `gateway` > the shipped default, in that
+ * order — matches the precedence every other override in this file already follows. */
+function resolveGatewayUrl(overrides: ConfigOverrides, configFile: string): string {
+  const flag = optional(overrides.gatewayUrl);
+  if (flag) return flag;
+
+  const fromEnv = optional(process.env['M402_GATEWAY_URL']);
+  if (fromEnv) return fromEnv;
+
+  const fromConfig = optional(readM402ConfigFile(configFile).gateway);
+  if (fromConfig) return fromConfig;
+
+  return DEFAULT_GATEWAY_URL;
+}
+
 export function loadAgentConfig(overrides: ConfigOverrides = {}): AgentConfig {
   const envFile = path.resolve(overrides.envFile ?? path.join(AGENT_DIR, '.env'));
   loadOptionalEnvFile(envFile);
@@ -217,6 +240,7 @@ export function loadAgentConfig(overrides: ConfigOverrides = {}): AgentConfig {
     // wallet's synced view, including its coins.
     syncCacheDir: path.join(path.dirname(stateFile), 'sync-cache'),
     configFile,
+    gatewayUrl: resolveGatewayUrl(overrides, configFile),
   };
 }
 

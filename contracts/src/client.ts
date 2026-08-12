@@ -18,6 +18,7 @@ import pino from 'pino';
 import * as Rx from 'rxjs';
 
 import { Contract, ledger, pureCircuits, zkConfigPath } from './contract.js';
+import { assertExpectedPrice } from './inspect-vault.js';
 import { type NetworkConfig } from './lib/config.js';
 import { buildProviders, type VaultProviders } from './lib/providers.js';
 import {
@@ -28,7 +29,7 @@ import {
 } from './lib/wallet.js';
 import { emptyPrivateState, witnesses, type M402PrivateState } from './witnesses.js';
 
-export { deriveUnshieldedAddress };
+export { assertExpectedPrice, deriveUnshieldedAddress };
 
 // Apollo's GraphQL subscriptions require a global WebSocket implementation in Node.
 // @ts-expect-error Node's global WebSocket shape differs from ws only nominally.
@@ -446,14 +447,6 @@ async function servicePrice(context: AgentContext, serviceId: Uint8Array): Promi
   const vault = ledger(state.data);
   if (!vault.servicePrice.member(serviceId)) throw new Error('unknown service');
   return vault.servicePrice.lookup(serviceId);
-}
-
-export function assertExpectedPrice(expectedPrice: bigint, registeredPrice: bigint): void {
-  if (registeredPrice !== expectedPrice) {
-    throw new Error(
-      `Gateway price ${expectedPrice} does not match on-chain price ${registeredPrice}.`,
-    );
-  }
 }
 
 export async function payFor(

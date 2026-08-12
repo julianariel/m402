@@ -8,6 +8,7 @@ export type GatewayServiceRow = {
   type: 'origin' | 'relay';
   target: string;
   chain?: string;
+  description?: string;
 };
 
 function serviceUrl(id: string, path = ''): string {

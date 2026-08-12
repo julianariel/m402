@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { validatePassword } from '@midnight-ntwrk/midnight-js-utils';
@@ -17,6 +17,7 @@ const originalPassword = process.env['M402_PRIVATE_STATE_PASSWORD'];
 const originalMnemonicFile = process.env['MIDNIGHT_PREVIEW_MNEMONIC_FILE'];
 const originalXdgStateHome = process.env['XDG_STATE_HOME'];
 const originalXdgConfigHome = process.env['XDG_CONFIG_HOME'];
+const originalGatewayUrl = process.env['M402_GATEWAY_URL'];
 const missingEnvFile = path.join(process.cwd(), `.missing-env-${process.pid}`);
 
 const tempDirs: string[] = [];
@@ -41,6 +42,8 @@ afterEach(() => {
   else process.env['XDG_STATE_HOME'] = originalXdgStateHome;
   if (originalXdgConfigHome === undefined) delete process.env['XDG_CONFIG_HOME'];
   else process.env['XDG_CONFIG_HOME'] = originalXdgConfigHome;
+  if (originalGatewayUrl === undefined) delete process.env['M402_GATEWAY_URL'];
+  else process.env['M402_GATEWAY_URL'] = originalGatewayUrl;
   while (tempDirs.length) rmSync(tempDirs.pop()!, { recursive: true, force: true });
 });
 
@@ -188,6 +191,52 @@ describe('agent config', () => {
 
     expect(result.generated).toBe(false);
     expect(process.env['M402_PRIVATE_STATE_PASSWORD']).toBe('Operator-Chosen-Password-123!');
+  });
+
+  it('defaults the gateway to the shipped hosted URL', () => {
+    delete process.env['M402_GATEWAY_URL'];
+    const configDir = mkdtempSync(path.join(tmpdir(), 'm402-gw-'));
+    tempDirs.push(configDir);
+    process.env['XDG_CONFIG_HOME'] = configDir;
+
+    const config = loadAgentConfig({ envFile: missingEnvFile });
+    expect(config.gatewayUrl).toBe('https://gw.m402.xyz');
+  });
+
+  it('prefers the --gateway flag over the environment', () => {
+    process.env['M402_GATEWAY_URL'] = 'https://from-env.example';
+    const config = loadAgentConfig({ envFile: missingEnvFile, gatewayUrl: 'https://from-flag.example' });
+    expect(config.gatewayUrl).toBe('https://from-flag.example');
+  });
+
+  it('falls back to a stashed config.json gateway when no flag/env override is present', () => {
+    const configDir = mkdtempSync(path.join(tmpdir(), 'm402-gw-'));
+    tempDirs.push(configDir);
+    process.env['XDG_CONFIG_HOME'] = configDir;
+    delete process.env['M402_GATEWAY_URL'];
+
+    // loadAgentConfig doesn't write config.json itself; hand-write the field the way a future
+    // `m402 config set` (or a person editing the file) would.
+    const configFile = loadAgentConfig({ envFile: missingEnvFile }).configFile;
+    mkdirSync(path.dirname(configFile), { recursive: true });
+    writeFileSync(configFile, JSON.stringify({ gateway: 'https://from-config.example' }));
+
+    const reloaded = loadAgentConfig({ envFile: missingEnvFile });
+    expect(reloaded.gatewayUrl).toBe('https://from-config.example');
+  });
+
+  it('prefers M402_GATEWAY_URL over a stashed config.json value', () => {
+    const configDir = mkdtempSync(path.join(tmpdir(), 'm402-gw-'));
+    tempDirs.push(configDir);
+    process.env['XDG_CONFIG_HOME'] = configDir;
+
+    const configFile = loadAgentConfig({ envFile: missingEnvFile }).configFile;
+    mkdirSync(path.dirname(configFile), { recursive: true });
+    writeFileSync(configFile, JSON.stringify({ gateway: 'https://from-config.example' }));
+
+    process.env['M402_GATEWAY_URL'] = 'https://from-env.example';
+    const reloaded = loadAgentConfig({ envFile: missingEnvFile });
+    expect(reloaded.gatewayUrl).toBe('https://from-env.example');
   });
 
   it('requires a private non-placeholder password for chain operations', () => {

@@ -45,7 +45,10 @@ export async function redeemCommand(
       throw new CliError('Redeem requires --yes when stdin is not interactive.', 2);
     }
     if (!(await confirmRedeem(amount))) {
-      output.info('Redeem cancelled.');
+      // output.info() is silent in --json mode; an agent parsing stdout as JSON still needs
+      // something to parse even on this early-return path.
+      if (output.options.json) output.data({ command: 'redeem', cancelled: true });
+      else output.info('Redeem cancelled.');
       return;
     }
   }

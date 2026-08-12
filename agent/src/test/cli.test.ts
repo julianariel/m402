@@ -54,6 +54,19 @@ describe('CLI startup', () => {
     });
   });
 
+  it('emits the JSON error shape on stdout, not stderr text, in --json mode', async () => {
+    const result = await exec(TSX, [CLI, 'init', '--json'], {
+      cwd: AGENT_DIR,
+      env: { ...process.env, M402_VAULT_ADDRESS: '', M402_ENV_FILE: '/nonexistent' },
+    }).catch((error: unknown) => error as { stdout: string; stderr: string; code: number });
+
+    expect(result.stderr).toBe('');
+    const parsed = JSON.parse(result.stdout) as { error: { message: string; code: string; retryable: boolean } };
+    expect(parsed.error.code).toBe('CONFIG_INVALID');
+    expect(parsed.error.retryable).toBe(false);
+    expect(parsed.error.message).toContain('No vault configured');
+  });
+
   it('rejects an unknown command without loading the wallet libraries', async () => {
     const startedAt = performance.now();
     await expect(exec(TSX, [CLI, 'badcommand'], { cwd: AGENT_DIR })).rejects.toMatchObject({

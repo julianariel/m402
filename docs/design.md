@@ -408,6 +408,17 @@ once the chain has already confirmed it, so there is no unconfirmed state for th
 The explorer lists native and relayed services together, with relayed entries badged by
 chain. Public: service name, price, call volume. Hidden: every payer and every amount.
 
+**`description` is off-chain and unverified.** It lives only in the gateway's registry, not in
+`deriveServiceId(owner, salt, price)`, so unlike price it is not bound by the chain — a
+merchant can change it at any time without re-registering. Treat it as informational, never as
+a guarantee of what a service actually does. It is also merchant-controlled text that an LLM
+agent reads and decides on (`m402 services --json`), which makes it a prompt-injection surface
+in any deployment where registration is open. For the stream every service is ours, so the
+risk is theoretical, but the gateway still bounds it to 256 characters and rejects control
+characters (`routes.ts`), and the CLI never interpolates it into anything resembling an
+instruction — it is rendered as inert data. Worth remembering before anyone adds an open
+registration form without thinking about this again.
+
 ## 7. Agent
 
 A CLI wrapping four commands: `init`, `deposit`, `call`, `redeem`.

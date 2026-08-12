@@ -1,7 +1,74 @@
-import { describe, it, expect } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import Database from 'better-sqlite3';
+import { afterEach, describe, it, expect } from 'vitest';
 import { createRegistry } from '../src/registry.js';
 
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  while (tempDirs.length) rmSync(tempDirs.pop()!, { recursive: true, force: true });
+});
+
 describe('registry', () => {
+  it('preserves a description', () => {
+    const registry = createRegistry(':memory:');
+    registry.insert({
+      id: 'svc1',
+      price: 100n,
+      owner: 'o',
+      type: 'origin',
+      target: 'https://a',
+      description: 'Returns the weather for a city.',
+    });
+    expect(registry.get('svc1')?.description).toBe('Returns the weather for a city.');
+  });
+
+  it('leaves description undefined when omitted', () => {
+    const registry = createRegistry(':memory:');
+    registry.insert({ id: 'svc1', price: 100n, owner: 'o', type: 'origin', target: 'https://a' });
+    expect(registry.get('svc1')?.description).toBeUndefined();
+  });
+
+  it('adds the description column to a database created before it existed', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'm402-registry-'));
+    tempDirs.push(dir);
+    const dbPath = path.join(dir, 'gateway.db');
+
+    // Simulate a pre-existing gateway.db from before `description` was added: the same
+    // CREATE TABLE this module used to run, minus the new column.
+    const legacy = new Database(dbPath);
+    legacy.exec(`
+      CREATE TABLE services (
+        id     TEXT PRIMARY KEY,
+        price  TEXT NOT NULL,
+        owner  TEXT NOT NULL,
+        type   TEXT NOT NULL,
+        target TEXT NOT NULL,
+        chain  TEXT
+      )
+    `);
+    legacy.prepare(
+      'INSERT INTO services (id, price, owner, type, target, chain) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run('legacy-svc', '50', 'o', 'origin', 'https://legacy', null);
+    legacy.close();
+
+    const registry = createRegistry(dbPath);
+    expect(registry.get('legacy-svc')).toEqual({
+      id: 'legacy-svc',
+      price: 50n,
+      owner: 'o',
+      type: 'origin',
+      target: 'https://legacy',
+      chain: undefined,
+      description: undefined,
+    });
+
+    // The migration itself must also be idempotent - a second createRegistry against the
+    // same (now-migrated) db must not error trying to add the column again.
+    expect(() => createRegistry(dbPath)).not.toThrow();
+  });
   it('returns undefined for an unknown id', () => {
     const registry = createRegistry(':memory:');
     expect(registry.get('missing')).toBeUndefined();

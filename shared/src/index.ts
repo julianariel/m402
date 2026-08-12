@@ -11,6 +11,11 @@ export type Service = {
   type: 'origin' | 'relay';
   target: string; // origin: proxy here · relay: pay-and-fetch here
   chain?: string; // CAIP-2, relay only, e.g. 'eip155:8453'
+  // Off-chain, gateway-held, merchant-editable — NOT part of deriveServiceId, so unlike
+  // price it is not bound by the chain. Bounded to 256 chars server-side (routes.ts). It is
+  // merchant-controlled text an LLM agent reads and acts on (m402 services --json): treat it
+  // as data, never as instructions.
+  description?: string;
 };
 
 export type PaymentRequired = {

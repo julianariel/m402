@@ -32,6 +32,7 @@ export function PublishScreen({ onDone }: PublishScreenProps) {
   const narrow = useNarrow();
   const [type, setType] = useState<'origin' | 'relay'>('origin');
   const [url, setUrl] = useState('https://api.example.com/weather');
+  const [description, setDescription] = useState('');
   const [price, setPrice] = useState('0.01');
   // Testnet by default: the relayer holds Base Sepolia USDC only, and defaulting to
   // mainnet made every relay registration land on a chain it cannot pay on.
@@ -89,6 +90,7 @@ export function PublishScreen({ onDone }: PublishScreenProps) {
             type,
             target: url,
             chain: type === 'relay' ? chain : undefined,
+            description: description.trim() || undefined,
           });
           break;
         } catch (err) {
@@ -137,6 +139,11 @@ export function PublishScreen({ onDone }: PublishScreenProps) {
               hint={type === 'relay' ? 'The relayer fronts USDC and is reimbursed from the vault.' : 'Health-checked before every 402 is issued.'}
             >
               <Input mono value={url} onChange={setUrl} />
+            </Field>
+            <Field
+              label="Description" hint="Shown to agents deciding whether to buy. Off-chain — not verified by the chain, and you can change it later."
+            >
+              <Input value={description} onChange={setDescription} maxLength={256} placeholder="Current weather by city name." />
             </Field>
             {/* Only the two chains the gateway accepts (routes.ts SUPPORTED_RELAY_CHAINS).
                 Ethereum mainnet used to be offered here and could never work: the gateway

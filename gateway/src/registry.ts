@@ -14,6 +14,7 @@ type ServiceRow = {
   type: 'origin' | 'relay';
   target: string;
   chain: string | null;
+  description: string | null;
 };
 
 function rowToService(row: ServiceRow): Service {
@@ -24,7 +25,18 @@ function rowToService(row: ServiceRow): Service {
     type: row.type,
     target: row.target,
     chain: row.chain ?? undefined,
+    description: row.description ?? undefined,
   };
+}
+
+/** Added after the table existed, so an existing `gateway.db` needs an ALTER TABLE rather than
+ * relying on CREATE TABLE IF NOT EXISTS — that statement only fires against a table that
+ * doesn't exist yet, and is a no-op against an already-created one missing the column. */
+function ensureDescriptionColumn(db: Database.Database): void {
+  const columns = db.pragma('table_info(services)') as Array<{ name: string }>;
+  if (!columns.some((c) => c.name === 'description')) {
+    db.exec('ALTER TABLE services ADD COLUMN description TEXT');
+  }
 }
 
 export function createRegistry(dbPath: string): Registry {
@@ -39,11 +51,12 @@ export function createRegistry(dbPath: string): Registry {
       chain  TEXT
     )
   `);
+  ensureDescriptionColumn(db);
 
   const getStmt = db.prepare<[string], ServiceRow>('SELECT * FROM services WHERE id = ?');
   const listStmt = db.prepare<[], ServiceRow>('SELECT * FROM services');
   const insertStmt = db.prepare(
-    'INSERT INTO services (id, price, owner, type, target, chain) VALUES (@id, @price, @owner, @type, @target, @chain)'
+    'INSERT INTO services (id, price, owner, type, target, chain, description) VALUES (@id, @price, @owner, @type, @target, @chain, @description)'
   );
 
   return {
@@ -63,6 +76,7 @@ export function createRegistry(dbPath: string): Registry {
           type: service.type,
           target: service.target,
           chain: service.chain ?? null,
+          description: service.description ?? null,
         });
         return 'created';
       } catch (err) {

@@ -32,6 +32,19 @@ export type ServiceRow = {
   owner: string;
 };
 
+/**
+ * Co-located with `readVaultState` rather than in `client.ts` (which costs ~5.2s to import,
+ * almost all testkit-js) so a price cross-check stays on this module's ~0.2s no-wallet path -
+ * `m402 services` needs both and neither needs a wallet.
+ */
+export function assertExpectedPrice(expectedPrice: bigint, registeredPrice: bigint): void {
+  if (registeredPrice !== expectedPrice) {
+    throw new Error(
+      `Gateway price ${expectedPrice} does not match on-chain price ${registeredPrice}.`,
+    );
+  }
+}
+
 export type VaultState = {
   address: string;
   mintCounter: bigint;

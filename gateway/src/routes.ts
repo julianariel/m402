@@ -6,6 +6,9 @@ import type { Registry } from './registry.js';
 import type { CheckOwnership } from './ownership.js';
 
 const SUPPORTED_RELAY_CHAINS = new Set(['eip155:8453', 'eip155:84532']);
+const MAX_DESCRIPTION_LENGTH = 256;
+// eslint-disable-next-line no-control-regex -- deliberately matching control characters to reject them
+const CONTROL_CHARACTERS = /[\x00-\x1F\x7F]/;
 
 export type VerifyResult = 'confirmed' | 'timeout' | 'replayed' | 'wrong-service';
 export type Verify = (receiptSecret: string, serviceId: string, timeoutMs: number) => Promise<VerifyResult>;
@@ -81,6 +84,10 @@ export function createRoutes(deps: RouteDeps): Hono {
   app.post('/services', async (c) => {
     const body = await c.req.json().catch(() => null);
     const validType = body && (body.type === 'origin' || body.type === 'relay');
+    const validDescription =
+      body &&
+      (body.description === undefined ||
+        (typeof body.description === 'string' && body.description.length <= MAX_DESCRIPTION_LENGTH));
     const valid =
       body &&
       typeof body.id === 'string' &&
@@ -88,9 +95,13 @@ export function createRoutes(deps: RouteDeps): Hono {
       typeof body.owner === 'string' &&
       validType &&
       typeof body.target === 'string' &&
-      (body.type !== 'relay' || typeof body.chain === 'string');
+      (body.type !== 'relay' || typeof body.chain === 'string') &&
+      validDescription;
 
     if (!valid) return c.body(null, 400);
+    if (body.description !== undefined && CONTROL_CHARACTERS.test(body.description)) {
+      return c.json({ reason: 'description-invalid' }, 400);
+    }
     if (body.type === 'relay' && !SUPPORTED_RELAY_CHAINS.has(body.chain)) {
       return c.json({ reason: 'unsupported-relay-chain' }, 400);
     }
@@ -116,6 +127,7 @@ export function createRoutes(deps: RouteDeps): Hono {
       type: body.type,
       target: body.target,
       chain: body.chain,
+      description: body.description,
     };
 
     const result = deps.registry.insert(service);

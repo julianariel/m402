@@ -6,7 +6,7 @@ import { EmptyState, Tooltip } from '../components/feedback';
 import { DataTable, StatBlock, type DataColumn } from '../components/data';
 import { PriceTag } from '../components/protocol';
 import type { GatewayServiceRow } from '../lib/gateway';
-import { approxUsdOf, labelOf, shortHex } from './serviceDisplay';
+import { approxUsdOf, labelOf, safeHostname, shortHex } from './serviceDisplay';
 import { useServices } from './useServices';
 import { VaultStatus } from './VaultStatus';
 import { useNarrow } from '../lib/useNarrow';
@@ -36,7 +36,9 @@ export function ExplorerScreen({ onOpenService, onPublish }: ExplorerScreenProps
       key: 'name', label: 'Service', render: (r) => (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           <span style={{ font: 'var(--fw-medium) var(--fs-body-sm)/1 var(--font-body)', color: 'var(--text-primary)' }}>{labelOf(r)}</span>
-          <span style={{ font: 'var(--fw-regular) var(--fs-mono-xs)/1 var(--font-mono)', color: 'var(--text-faint)' }}>/s/{shortHex(r.id)}</span>
+          <span style={{ font: 'var(--fw-regular) var(--fs-mono-xs)/1 var(--font-mono)', color: 'var(--text-faint)' }}>
+            {r.description ? `${safeHostname(r.target)} · ` : ''}/s/{shortHex(r.id)}
+          </span>
         </div>
       ),
     },

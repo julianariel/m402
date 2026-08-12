@@ -111,6 +111,17 @@ describe('GET /services', () => {
       { id: 'svc1', price: '500', owner: 'o', type: 'origin', target: 'https://example.com', chain: undefined },
     ]);
   });
+
+  it('includes the description', async () => {
+    const { app, registry } = testApp();
+    registry.insert({
+      id: 'svc1', price: 500n, owner: 'o', type: 'origin', target: 'https://example.com',
+      description: 'Returns the weather for a city.',
+    });
+    const res = await app.request('/services');
+    const [row] = (await res.json()) as Array<{ description?: string }>;
+    expect(row?.description).toBe('Returns the weather for a city.');
+  });
 });
 
 describe('POST /services', () => {
@@ -202,6 +213,49 @@ describe('POST /services', () => {
       body: 'not json',
     });
     expect(res.status).toBe(400);
+  });
+
+  it('stores a description', async () => {
+    const { app, registry } = testApp();
+    const res = await app.request('/services', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'svc1', price: '500', owner: 'o', type: 'origin', target: 'https://example.com',
+        description: 'Returns the weather for a city.',
+      }),
+    });
+    expect(res.status).toBe(201);
+    expect(registry.get('svc1')?.description).toBe('Returns the weather for a city.');
+  });
+
+  it('rejects a description over 256 characters', async () => {
+    const { app, registry } = testApp();
+    const res = await app.request('/services', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'svc1', price: '500', owner: 'o', type: 'origin', target: 'https://example.com',
+        description: 'x'.repeat(257),
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect(registry.get('svc1')).toBeUndefined();
+  });
+
+  it('rejects a description containing control characters', async () => {
+    const { app, registry } = testApp();
+    const res = await app.request('/services', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'svc1', price: '500', owner: 'o', type: 'origin', target: 'https://example.com',
+        description: 'Looks innocent\x00but is not.',
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ reason: 'description-invalid' });
+    expect(registry.get('svc1')).toBeUndefined();
   });
 
   it('rejects a duplicate id with 409', async () => {

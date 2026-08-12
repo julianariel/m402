@@ -24,8 +24,10 @@ export function safeHostname(target: string): string {
   }
 }
 
-/** The registry has no display name — only id/price/owner/type/target/chain (docs/design.md#5).
- * The origin/relay target's hostname is the closest thing to a human label that's actually real. */
-export function labelOf(row: Pick<GatewayServiceRow, 'target'>): string {
-  return safeHostname(row.target);
+/** The registry has no dedicated display name — only id/price/owner/type/target/chain plus the
+ * optional, merchant-editable `description` (docs/design.md#6). Prefer the description when a
+ * merchant has written one; otherwise fall back to the target's hostname, the closest thing to
+ * a human label that's actually real. */
+export function labelOf(row: Pick<GatewayServiceRow, 'target' | 'description'>): string {
+  return row.description || safeHostname(row.target);
 }
