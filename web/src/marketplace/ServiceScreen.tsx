@@ -8,7 +8,7 @@ import { fetchVaultLedger } from '../chain/ledger';
 import { payForService } from '../chain/circuits';
 import { useWalletContext } from '../wallet/WalletContext';
 import { GATEWAY_URL } from '../chain/config';
-import { approxUsdOf, safeHostname, shortHex } from './serviceDisplay';
+import { approxUsdOf, labelOf, safeHostname, shortHex } from './serviceDisplay';
 import { useNarrow } from '../lib/useNarrow';
 
 export interface ServiceScreenProps {
@@ -135,10 +135,15 @@ export function ServiceScreen({ id, onBack }: ServiceScreenProps) {
               {row?.chain && <Badge uppercase={false}>{row.chain}</Badge>}
               <StatusDot tone="live" label="live" />
             </div>
-            <h1 style={{ margin: 0, font: 'var(--text-h1)', letterSpacing: 'var(--ls-heading)' }}>{row ? safeHostname(row.target) : shortHex(id)}</h1>
+            <h1 style={{ margin: 0, font: 'var(--text-h1)', letterSpacing: 'var(--ls-heading)' }}>{row ? labelOf(row) : shortHex(id)}</h1>
             <p style={{ margin: 'var(--space-3) 0 0', maxWidth: '56ch', font: 'var(--text-body)', color: 'var(--text-secondary)' }}>
-              {row ? row.target : 'Loading service details from the gateway…'}
+              {row ? row.description || row.target : 'Loading service details from the gateway…'}
             </p>
+            {row?.description && (
+              <p style={{ margin: 'var(--space-2) 0 0', font: 'var(--text-code)', color: 'var(--text-faint)' }}>
+                {row.target}
+              </p>
+            )}
           </div>
 
           <Card padding="md">
