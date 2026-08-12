@@ -8,15 +8,27 @@ import { fromHex, toHex } from '@midnight-ntwrk/midnight-js-utils';
 import { CompiledContract } from '@midnight-ntwrk/midnight-js-protocol/compact-js';
 import type { ContractAddress } from '@midnight-ntwrk/midnight-js-protocol/compact-runtime';
 import { asContractAddress, SucceedEntirely, type ProofProvider } from '@midnight-ntwrk/midnight-js-types';
-import { logger as testkitLogger, type EnvironmentConfiguration } from '@midnight-ntwrk/testkit-js';
+import type { FacadeState } from '@midnight-ntwrk/wallet-sdk';
+import {
+  FaucetClient,
+  logger as testkitLogger,
+  type EnvironmentConfiguration,
+} from '@midnight-ntwrk/testkit-js';
 import pino from 'pino';
 import * as Rx from 'rxjs';
 
 import { Contract, ledger, pureCircuits, zkConfigPath } from './contract.js';
 import { type NetworkConfig } from './lib/config.js';
 import { buildProviders, type VaultProviders } from './lib/providers.js';
-import { MidnightWalletProvider, syncWallet, type WalletSecret } from './lib/wallet.js';
+import {
+  deriveUnshieldedAddress,
+  MidnightWalletProvider,
+  syncWallet,
+  type WalletSecret,
+} from './lib/wallet.js';
 import { emptyPrivateState, witnesses, type M402PrivateState } from './witnesses.js';
+
+export { deriveUnshieldedAddress };
 
 // Apollo's GraphQL subscriptions require a global WebSocket implementation in Node.
 // @ts-expect-error Node's global WebSocket shape differs from ws only nominally.
@@ -316,6 +328,110 @@ export async function summarizeWallet(context: AgentContext): Promise<WalletSumm
     creditTotal: state.shielded.balances[creditColor] ?? 0n,
     creditCoins,
   };
+}
+
+/** A TOTAL deadline via race, not a per-emission one - same reasoning as `syncWallet`'s timer. */
+async function waitFor<T>(
+  observable: Rx.Observable<T>,
+  timeoutMs: number,
+): Promise<T | undefined> {
+  const deadline = Rx.timer(timeoutMs).pipe(Rx.map<number, undefined>(() => undefined));
+  return Rx.firstValueFrom(Rx.race(observable, deadline));
+}
+
+/**
+ * Requests a faucet drip. Despite `FaucetClient.requestTokens`'s JSDoc claiming it "logs but
+ * does not throw on failure," the bundled implementation has no internal try/catch at all and
+ * propagates whatever axios throws (verified live: a captcha-protected endpoint 403s here) -
+ * so this wraps it and never throws. `waitForNightBalance` is what actually decides whether
+ * funding succeeded, by checking the balance rather than trusting this call.
+ */
+export async function requestFaucetDrip(
+  address: string,
+  faucetUrl: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const logger = pino({ level: process.env['M402_DEBUG'] ? 'debug' : 'silent' });
+  try {
+    await new FaucetClient(faucetUrl, logger).requestTokens(address);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** Waits for the unshielded NIGHT balance to become positive. Throws on timeout - unlike DUST
+ * registration, there is nothing useful to do without NIGHT. */
+export async function waitForNightBalance(
+  context: AgentContext,
+  timeoutMs = 180_000,
+): Promise<bigint> {
+  const balance = (state: FacadeState) => state.unshielded.balances[nativeToken().raw] ?? 0n;
+
+  const state = await waitFor(
+    context.wallet.wallet.state().pipe(Rx.filter((state) => balance(state) > 0n)),
+    timeoutMs,
+  );
+  if (!state) {
+    throw new Error(
+      `No NIGHT balance appeared within ${Math.round(timeoutMs / 1000)}s. Fund the address and retry.`,
+    );
+  }
+  return balance(state);
+}
+
+export type DustRegistrationResult = {
+  txId: string;
+  fee: bigint;
+  registeredCount: number;
+};
+
+/**
+ * Registers every available NIGHT UTXO for DUST generation.
+ *
+ * Self-funding: the registration transaction's fee is paid by the DUST the registered UTXOs
+ * generate, not from the wallet's existing DUST balance, so it succeeds even at a 0 DUST
+ * balance (verified on devnet at 5, 100 and 10,000 NIGHT). `waitForGeneratedDust` is a
+ * best-effort safety margin, not a precondition - its timeout is swallowed rather than thrown.
+ */
+export async function registerForDustGeneration(
+  context: AgentContext,
+  timeoutMs = 120_000,
+): Promise<DustRegistrationResult> {
+  const wallet = context.wallet.wallet;
+  const keystore = context.wallet.unshieldedKeystore;
+
+  const state = await Rx.firstValueFrom(wallet.state());
+  const nightUtxos = state.unshielded.availableCoins;
+  if (nightUtxos.length === 0) {
+    throw new Error('No NIGHT UTXOs available to register for DUST generation.');
+  }
+
+  const { fee } = await wallet.estimateRegistration(nightUtxos);
+  await wallet.waitForGeneratedDust(nightUtxos, fee, { timeoutMs }).catch(() => undefined);
+
+  const recipe = await wallet.registerNightUtxosForDustGeneration(
+    nightUtxos,
+    keystore.getPublicKey(),
+    (payload) => keystore.signData(payload),
+  );
+
+  context.onPhase?.('proving');
+  const finalized = await wallet.finalizeRecipe(recipe);
+  context.onPhase?.('submitting');
+  const txId = await wallet.submitTransaction(finalized);
+
+  context.onPhase?.('confirming');
+  const confirmed = await waitFor(
+    wallet
+      .state()
+      .pipe(Rx.filter((s) => s.unshielded.availableCoins.some((c) => c.meta.registeredForDustGeneration))),
+    timeoutMs,
+  );
+  const registeredCount = confirmed
+    ? confirmed.unshielded.availableCoins.filter((c) => c.meta.registeredForDustGeneration).length
+    : 0;
+
+  return { txId, fee, registeredCount };
 }
 
 export async function hasReceipt(context: AgentContext, receipt: Uint8Array): Promise<boolean> {

@@ -4,7 +4,7 @@ import { parseArgs } from 'node:util';
 import { loadAgentConfig } from './config.js';
 import { callCommand } from './commands/call.js';
 import { depositCommand } from './commands/deposit.js';
-import { initCommand } from './commands/init.js';
+import { initCommand, type InitOptions } from './commands/init.js';
 import { redeemCommand } from './commands/redeem.js';
 import { toCliError } from './errors.js';
 import { Output } from './output.js';
@@ -37,13 +37,19 @@ Common options:
   --network <name>         local, preview, or preprod (default: preview)
   --mnemonic-file <path>   Path to wallet words; never pass the words themselves
   --env-file <path>        Environment file (default: agent/.env)
-  --state-file <path>      Receipt state file (default: agent/.state/<network>.json)
+  --state-file <path>      Receipt state file (default: ~/.m402/<network>.json)
   --json                   Machine-readable output
   --quiet                  Suppress progress messages
   --no-color               Disable terminal colors
   --debug                  Print unexpected stack traces
   -h, --help               Show help
   --version                Show version
+
+Init options:
+  --new                     Generate a wallet, fund it from the faucet, register it for DUST
+  --import <path>           Use an existing mnemonic file instead of generating one
+  --force                   Overwrite an existing wallet at the default location
+  --no-faucet               Skip the automatic faucet drip (--new/--import only)
 
 Call options:
   --dry-run                Fetch and display the 402 without paying
@@ -93,6 +99,10 @@ async function main(args: string[]): Promise<void> {
       'allow-other-vault': { type: 'boolean', default: false },
       fresh: { type: 'boolean', default: false },
       yes: { type: 'boolean', short: 'y', default: false },
+      new: { type: 'boolean', default: false },
+      import: { type: 'string' },
+      force: { type: 'boolean', default: false },
+      'no-faucet': { type: 'boolean', default: false },
     },
   });
 
@@ -102,6 +112,9 @@ async function main(args: string[]): Promise<void> {
   }
   if (command === 'init' && argument) {
     throw new Error(`init takes no arguments; received '${argument}'.`);
+  }
+  if (command === 'init' && parsed.values.new && parsed.values.import) {
+    throw new Error('--new and --import are mutually exclusive.');
   }
   if (extra.length) throw new Error(`${command} received unexpected arguments: ${extra.join(' ')}`);
 
@@ -120,9 +133,20 @@ async function main(args: string[]): Promise<void> {
   });
 
   switch (command) {
-    case 'init':
-      await initCommand(config, output);
+    case 'init': {
+      const initOptions: InitOptions = parsed.values.import
+        ? {
+            mode: 'import',
+            importFile: parsed.values.import,
+            force: parsed.values.force,
+            noFaucet: parsed.values['no-faucet'],
+          }
+        : parsed.values.new
+          ? { mode: 'new', force: parsed.values.force, noFaucet: parsed.values['no-faucet'] }
+          : { mode: 'warm' };
+      await initCommand(config, output, initOptions);
       break;
+    }
     case 'deposit':
       await depositCommand(argument, config, output);
       break;

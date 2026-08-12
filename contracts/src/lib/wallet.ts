@@ -40,6 +40,25 @@ export type WalletSecret =
   | { kind: 'seed'; value: string }
   | { kind: 'mnemonic'; value: string };
 
+/**
+ * The unshielded address a secret derives to, without building or starting a wallet.
+ *
+ * Pure crypto - no network round trip. Used to print the address `init --new` just generated
+ * before the multi-minute sync begins, matching the risk section's "print before anything
+ * slow." `MidnightWalletProvider.build` derives the same keystore internally; this duplicates
+ * only the cheap half of that work.
+ */
+export function deriveUnshieldedAddress(
+  secret: WalletSecret,
+  networkId: EnvironmentConfiguration['walletNetworkId'],
+): string {
+  const seeds =
+    secret.kind === 'mnemonic'
+      ? WalletSeeds.fromMnemonic(secret.value)
+      : WalletSeeds.fromMasterSeed(secret.value);
+  return createKeystore(seeds.unshielded, networkId).getBech32Address().toString();
+}
+
 export class MidnightWalletProvider implements MidnightProvider, WalletProvider {
   readonly wallet: WalletFacade;
   readonly unshieldedKeystore: UnshieldedKeystore;

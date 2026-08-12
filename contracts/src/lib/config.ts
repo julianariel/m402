@@ -5,8 +5,10 @@ export type NetworkConfig = {
   node: string;
   nodeWS: string;
   proofServer: string;
-  // Human-facing faucet page for topping up test wallets. Not a programmatic
-  // drip endpoint — the tests assume seeds in .env.<network> are pre-funded.
+  // Doubles as the programmatic drip endpoint: @midnight-ntwrk/testkit-js's own internal
+  // `waitForFunds` posts to this exact URL via FaucetClient, despite an earlier comment here
+  // claiming it wasn't a programmatic endpoint — verified against testkit-js's bundled source,
+  // not just its (inaccurate) type declarations.
   faucet: string;
 };
 
